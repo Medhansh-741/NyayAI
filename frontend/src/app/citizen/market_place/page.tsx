@@ -2,6 +2,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import gsap from 'gsap';
+import { Sidebar } from '../../../../components/sidebar';
 
 // Mock data for lawyers
 const LAWYERS = [
@@ -38,8 +39,13 @@ const LAWYERS = [
 ];
 
 export default function LawyerMarketplace() {
-  const [activePriceFilter, setActivePriceFilter] = useState<string>('10k-25k');
+  const [selectedPriceIndex, setSelectedPriceIndex] = useState<number>(2);
   const [hoveredCard, setHoveredCard] = useState<number | null>(null);
+
+  const priceOptions = [
+    '₹0', '₹10k', '₹20k', '₹30k', '₹40k', '₹50k', '₹60k', '₹70k', '₹80k', '₹90k',
+    '₹1L', '₹1.1L', '₹1.2L', '₹1.3L', '₹1.4L', '₹1.5L', '₹1.6L', '₹1.7L', '₹1.8L', '₹1.9L', '₹2L+'
+  ];
   
   // Dropdown state
   const [isLawTypeOpen, setIsLawTypeOpen] = useState(false);
@@ -179,7 +185,7 @@ export default function LawyerMarketplace() {
         </div>
 
       {/* Filters Section */}
-      <div className="flex flex-wrap gap-4 mb-8 font-sans">
+      <div className="flex flex-col md:flex-row justify-between items-center gap-6 mb-12 font-sans w-full relative z-40">
         {/* Law Type GSAP Dropdown */}
         <div className="relative z-50 shrink-0" ref={dropdownRef}>
           <button 
@@ -224,33 +230,46 @@ export default function LawyerMarketplace() {
           </div>
         </div>
 
-          {/* Price Range Toggle Group */}
-          <div className="flex bg-white dark:bg-[#0f1e3f] border border-gray-300 dark:border-[#cdaa80]/50 rounded-lg overflow-hidden shrink-0 shadow-sm">
-            <button 
-              onClick={() => setActivePriceFilter('under10k')}
-              className={`px-5 py-2.5 text-sm transition-all duration-200 border-r border-gray-200 dark:border-[#cdaa80]/30 text-center
-                ${activePriceFilter === 'under10k' ? 'bg-[#997953] dark:bg-[#cdaa80] text-white dark:text-[#0f1e3f] font-medium' : 'text-[#997953] dark:text-[#cdaa80] hover:bg-gray-50 dark:hover:bg-[#213a56]'}
-              `}
-            >
-              &lt; ₹10k
-            </button>
-            <button 
-              onClick={() => setActivePriceFilter('10k-25k')}
-              className={`px-5 py-2.5 text-sm transition-all duration-200 border-r border-gray-200 dark:border-[#cdaa80]/30 text-center
-                ${activePriceFilter === '10k-25k' ? 'bg-[#997953] dark:bg-[#cdaa80] text-white dark:text-[#0f1e3f] font-medium' : 'text-[#997953] dark:text-[#cdaa80] hover:bg-gray-50 dark:hover:bg-[#213a56]'}
-              `}
-            >
-              ₹10k - ₹25k
-            </button>
-            <button 
-              onClick={() => setActivePriceFilter('over25k')}
-              className={`px-5 py-2.5 text-sm transition-all duration-200 text-center
-                ${activePriceFilter === 'over25k' ? 'bg-[#997953] dark:bg-[#cdaa80] text-white dark:text-[#0f1e3f] font-medium' : 'text-[#997953] dark:text-[#cdaa80] hover:bg-gray-50 dark:hover:bg-[#213a56]'}
-              `}
-            >
-              &gt; ₹25k
-            </button>
+        {/* Glowing Horizontal Price Wheel */}
+        <div className="relative w-full md:w-[420px] h-16 bg-[#0a152e] shrink-0 flex items-center justify-center overflow-hidden rounded-full border border-[#cdaa80]/20 shadow-[inset_0_4px_12px_rgba(0,0,0,0.5),_0_8px_32px_rgba(0,0,0,0.4)]">
+          {/* Edge gradients for smooth masking */}
+          <div className="absolute left-0 w-24 h-full bg-gradient-to-r from-[#0a152e] via-[#0a152e]/80 to-transparent z-20 pointer-events-none rounded-l-full" />
+          <div className="absolute right-0 w-24 h-full bg-gradient-to-l from-[#0a152e] via-[#0a152e]/80 to-transparent z-20 pointer-events-none rounded-r-full" />
+
+          {/* Center highlight ring */}
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[84px] h-[46px] bg-[#cdaa80]/15 border border-[#cdaa80]/70 rounded-full z-10 pointer-events-none shadow-[0_0_20px_rgba(205,170,128,0.3)] backdrop-blur-[1px]" />
+
+          {/* Slidable Track */}
+          <div 
+            className="absolute top-1/2 left-1/2 flex items-center transition-transform duration-500 ease-out z-10"
+            style={{ 
+               transform: `translate(calc(-${selectedPriceIndex * 84 + 42}px), -50%)` 
+            }}
+          >
+            {priceOptions.map((price, idx) => {
+              const dist = Math.abs(idx - selectedPriceIndex);
+              const isSelected = dist === 0;
+              const scale = isSelected ? 1.05 : Math.max(0.7, 1 - dist * 0.15);
+              const opacity = isSelected ? 1 : Math.max(0.15, 1 - dist * 0.25);
+
+              return (
+                <div 
+                  key={price}
+                  onClick={() => setSelectedPriceIndex(idx)}
+                  className={`w-[84px] shrink-0 text-center cursor-pointer transition-all duration-300 font-serif tracking-wide text-[16px]
+                    ${isSelected ? 'text-[#cdaa80] drop-shadow-[0_0_12px_rgba(205,170,128,1)]' : 'text-[#cdaa80]/50 hover:text-[#cdaa80]/80'}
+                  `}
+                  style={{
+                    transform: `scale(${scale})`,
+                    opacity: opacity,
+                  }}
+                >
+                  {price}
+                </div>
+              );
+            })}
           </div>
+        </div>
 
         {/* Experience Dropdown */}
         <div className="relative z-50 shrink-0" ref={expDropdownRef}>
@@ -406,6 +425,7 @@ export default function LawyerMarketplace() {
         }
       `}} />
 
+      </div>
     </div>
   );
 }
