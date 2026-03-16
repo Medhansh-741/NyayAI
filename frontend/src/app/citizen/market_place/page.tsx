@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import gsap from 'gsap';
 
 // Mock data for lawyers
 const LAWYERS = [
@@ -39,6 +40,125 @@ const LAWYERS = [
 export default function LawyerMarketplace() {
   const [activePriceFilter, setActivePriceFilter] = useState<string>('10k-25k');
   const [hoveredCard, setHoveredCard] = useState<number | null>(null);
+  
+  // Dropdown state
+  const [isLawTypeOpen, setIsLawTypeOpen] = useState(false);
+  const [selectedLawType, setSelectedLawType] = useState('Law Type');
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const dropdownContentRef = useRef<HTMLDivElement>(null);
+
+  const [isExperienceOpen, setIsExperienceOpen] = useState(false);
+  const [selectedExperience, setSelectedExperience] = useState('Years in Practice');
+  const expDropdownRef = useRef<HTMLDivElement>(null);
+  const expDropdownContentRef = useRef<HTMLDivElement>(null);
+
+  const lawTypes = [
+    "Criminal",
+    "Family / Divorce",
+    "Property",
+    "Consumer Disputes",
+    "Cyber Crime",
+    "Labour / Employment",
+    "Tax",
+    "Corporate / Business",
+    "Intellectual Property",
+    "Constitutional / PIL"
+  ];
+
+  const experienceLevels = [
+    "0 – 2 years (Junior Advocate)",
+    "3 – 5 years (Early Career)",
+    "6 – 10 years (Mid-Level Advocate)",
+    "11 – 15 years (Experienced Advocate)",
+    "16 – 20 years (Senior Advocate)",
+    "20+ years (Highly Experienced)"
+  ];
+
+  // Handle click outside to close dropdown
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsLawTypeOpen(false);
+      }
+      if (expDropdownRef.current && !expDropdownRef.current.contains(event.target as Node)) {
+        setIsExperienceOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // GSAP Animation for dropdown
+  useEffect(() => {
+    if (isLawTypeOpen) {
+      gsap.fromTo(dropdownContentRef.current, 
+        { 
+          opacity: 0, 
+          y: -10, 
+          scaleY: 0.9, 
+          transformOrigin: "top center",
+          display: "none"
+        },
+        { 
+          opacity: 1, 
+          y: 0, 
+          scaleY: 1, 
+          duration: 0.2, 
+          ease: "power2.out",
+          display: "block"
+        }
+      );
+    } else {
+      gsap.to(dropdownContentRef.current, {
+        opacity: 0,
+        y: -10,
+        scaleY: 0.9,
+        duration: 0.15,
+        ease: "power2.in",
+        onComplete: () => {
+          if (dropdownContentRef.current) {
+            dropdownContentRef.current.style.display = "none";
+          }
+        }
+      });
+    }
+  }, [isLawTypeOpen]);
+
+  // GSAP Animation for Experience dropdown
+  useEffect(() => {
+    if (isExperienceOpen) {
+      gsap.fromTo(expDropdownContentRef.current, 
+        { 
+          opacity: 0, 
+          y: -10, 
+          scaleY: 0.9, 
+          transformOrigin: "top center",
+          display: "none"
+        },
+        { 
+          opacity: 1, 
+          y: 0, 
+          scaleY: 1, 
+          duration: 0.2, 
+          ease: "power2.out",
+          display: "block"
+        }
+      );
+    } else {
+      gsap.to(expDropdownContentRef.current, {
+        opacity: 0,
+        y: -10,
+        scaleY: 0.9,
+        duration: 0.15,
+        ease: "power2.in",
+        onComplete: () => {
+          if (expDropdownContentRef.current) {
+            expDropdownContentRef.current.style.display = "none";
+          }
+        }
+      });
+    }
+  }, [isExperienceOpen]);
 
   return (
     <div className="max-w-[1200px] mx-auto p-6 md:p-10 text-white min-h-screen bg-[#0f1e3f] font-serif">
@@ -55,16 +175,49 @@ export default function LawyerMarketplace() {
 
       {/* Filters Section */}
       <div className="flex flex-wrap gap-4 mb-8 font-sans">
-        {/* Law Type Dropdown */}
-        <button className="flex items-center gap-3 bg-[#0f1e3f] border border-[#cdaa80]/50 text-[#cdaa80] px-4 py-2.5 rounded-lg hover:bg-[#213a56] transition-colors focus:ring-2 focus:ring-[#cdaa80]/30 outline-none w-48">
-          <svg className="w-5 h-5 shrink-0 opacity-80" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-          </svg>
-          <span className="flex-1 text-left text-sm">Law Type</span>
-          <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
-        </button>
+        {/* Law Type GSAP Dropdown */}
+        <div className="relative z-50 shrink-0" ref={dropdownRef}>
+          <button 
+            onClick={() => setIsLawTypeOpen(!isLawTypeOpen)}
+            className={`flex items-center gap-3 bg-[#0f1e3f] border border-[#cdaa80]/50 text-[#cdaa80] px-4 py-2.5 rounded-lg transition-colors focus:ring-2 focus:ring-[#cdaa80]/30 outline-none w-56
+              ${isLawTypeOpen ? 'bg-[#213a56] ring-1 ring-[#cdaa80]/50' : 'hover:bg-[#213a56]'}
+            `}
+          >
+            <svg className="w-5 h-5 shrink-0 opacity-80" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+            </svg>
+            <span className="flex-1 text-left text-sm truncate">{selectedLawType}</span>
+            <svg className={`w-4 h-4 shrink-0 transition-transform duration-300 ${isLawTypeOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+
+          {/* GSAP Animated Dropdown Content */}
+          <div 
+            ref={dropdownContentRef}
+            className="absolute top-full left-0 mt-2 w-56 bg-[#0f1e3f] border border-[#cdaa80]/30 rounded-lg shadow-2xl overflow-hidden hidden"
+            style={{ display: 'none' }}
+          >
+            <div className="max-h-[240px] overflow-y-auto custom-scrollbar bg-[#0f1e3f] py-1">
+              {lawTypes.map((type) => (
+                <button
+                  key={type}
+                  onClick={() => {
+                    setSelectedLawType(type);
+                    setIsLawTypeOpen(false);
+                  }}
+                  className={`w-full text-left px-4 py-2.5 text-sm transition-colors
+                    ${selectedLawType === type 
+                      ? 'bg-[#cdaa80]/20 text-[#cdaa80] font-medium' 
+                      : 'text-white/80 hover:bg-[#213a56] hover:text-[#cdaa80]'}
+                  `}
+                >
+                  {type}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
 
         {/* Price Range Toggle Group */}
         <div className="flex bg-[#0f1e3f] border border-[#cdaa80]/50 rounded-lg overflow-hidden shrink-0">
@@ -95,15 +248,48 @@ export default function LawyerMarketplace() {
         </div>
 
         {/* Experience Dropdown */}
-        <button className="flex items-center gap-3 bg-[#0f1e3f] border border-[#cdaa80]/50 text-[#cdaa80] px-4 py-2.5 rounded-lg hover:bg-[#213a56] transition-colors focus:ring-2 focus:ring-[#cdaa80]/30 outline-none w-56">
-          <svg className="w-5 h-5 shrink-0 opacity-80" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
-          </svg>
-          <span className="flex-1 text-left text-sm">Years in Practice</span>
-          <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
-        </button>
+        <div className="relative z-50 shrink-0" ref={expDropdownRef}>
+          <button 
+            onClick={() => setIsExperienceOpen(!isExperienceOpen)}
+            className={`flex items-center gap-3 bg-[#0f1e3f] border border-[#cdaa80]/50 text-[#cdaa80] px-4 py-2.5 rounded-lg transition-colors focus:ring-2 focus:ring-[#cdaa80]/30 outline-none w-64
+              ${isExperienceOpen ? 'bg-[#213a56] ring-1 ring-[#cdaa80]/50' : 'hover:bg-[#213a56]'}
+            `}
+          >
+            <svg className="w-5 h-5 shrink-0 opacity-80" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+            </svg>
+            <span className="flex-1 text-left text-sm truncate">{selectedExperience}</span>
+            <svg className={`w-4 h-4 shrink-0 transition-transform duration-300 ${isExperienceOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+
+          {/* GSAP Animated Dropdown Content */}
+          <div 
+            ref={expDropdownContentRef}
+            className="absolute top-full left-0 mt-2 w-64 bg-[#0f1e3f] border border-[#cdaa80]/30 rounded-lg shadow-2xl overflow-hidden hidden"
+            style={{ display: 'none' }}
+          >
+            <div className="max-h-[240px] overflow-y-auto custom-scrollbar bg-[#0f1e3f] py-1">
+              {experienceLevels.map((exp) => (
+                <button
+                  key={exp}
+                  onClick={() => {
+                    setSelectedExperience(exp);
+                    setIsExperienceOpen(false);
+                  }}
+                  className={`w-full text-left px-4 py-2.5 text-sm transition-colors
+                    ${selectedExperience === exp 
+                      ? 'bg-[#cdaa80]/20 text-[#cdaa80] font-medium' 
+                      : 'text-white/80 hover:bg-[#213a56] hover:text-[#cdaa80]'}
+                  `}
+                >
+                  {exp}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Lawyers List */}
@@ -197,6 +383,24 @@ export default function LawyerMarketplace() {
         ))}
       </div>
       
+      {/* Global CSS for the custom scrollbar */}
+      <style dangerouslySetInnerHTML={{__html: `
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 5px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: #0f1e3f;
+          border-radius: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background-color: #213a56;
+          border-radius: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background-color: rgba(205, 170, 128, 0.5);
+        }
+      `}} />
+
     </div>
   );
 }
