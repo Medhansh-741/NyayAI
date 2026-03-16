@@ -1,11 +1,17 @@
 import React from 'react';
+import { Footer } from '../../../../components/footer';
+import { Sidebar } from '../../../../components/sidebar';
 
 export default function CitizenHome() {
   return (
-    <div className="max-w-[1400px] mx-auto p-6 md:p-8 text-white min-h-screen bg-[#0f1e3f]">
-      
-      {/* Page Header */}
-      <div className="mb-6">
+    <div className="flex min-h-screen bg-[#0f1e3f]">
+      <div className="md:sticky md:top-0 md:h-screen shrink-0 z-50">
+        <Sidebar />
+      </div>
+
+      <div className="flex-1 max-w-[1400px] mx-auto p-6 md:p-8 text-white">
+        {/* Page Header */}
+        <div className="mb-6">
         <h1 className="text-xl font-medium tracking-wide text-[#cdaa80] mb-1">
           NyayaAI Legal Assistant
         </h1>
@@ -182,6 +188,23 @@ export default function CitizenHome() {
         </div>
       </section>
       
+      {/* Footer */}
+      <Footer
+        themeColors={{
+          bgLight: '#0f1e3f',
+          bgDark: '#0f1e3f',
+          cardBgLight: '#0f1e3f',
+          cardBgDark: '#0f1e3f',
+          textLight: '#ffffff',
+          textDark: '#cdaa80',
+          accent: '#cdaa80',
+          accentHover: '#997953',
+        }}
+        logoText="NyayAI"
+        copyrightText="© 2026 NyayAI. All rights reserved."
+      />
+
+      </div>
     </div>
   );
 }
