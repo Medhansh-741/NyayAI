@@ -143,6 +143,124 @@ export type Database = {
           },
         ]
       }
+      case_state: {
+        Row: {
+          action_plan: Json | null
+          agent_trace: Json | null
+          case_id: string
+          created_at: string | null
+          current_agent: string | null
+          evidence_inventory: Json | null
+          fact_confirmation_status: string | null
+          generated_documents: Json | null
+          human_review_flags: Json | null
+          id: string
+          language_preference: string | null
+          legal_mapping: Json | null
+          ocr_documents: Json | null
+          pipeline_status: string | null
+          raw_narrative: string | null
+          reasoning_trace: Json | null
+          retrieved_chunks: Json | null
+          state_jurisdiction: string | null
+          structured_facts: Json | null
+          updated_at: string | null
+          user_feedback: Json | null
+        }
+        Insert: {
+          action_plan?: Json | null
+          agent_trace?: Json | null
+          case_id: string
+          created_at?: string | null
+          current_agent?: string | null
+          evidence_inventory?: Json | null
+          fact_confirmation_status?: string | null
+          generated_documents?: Json | null
+          human_review_flags?: Json | null
+          id?: string
+          language_preference?: string | null
+          legal_mapping?: Json | null
+          ocr_documents?: Json | null
+          pipeline_status?: string | null
+          raw_narrative?: string | null
+          reasoning_trace?: Json | null
+          retrieved_chunks?: Json | null
+          state_jurisdiction?: string | null
+          structured_facts?: Json | null
+          updated_at?: string | null
+          user_feedback?: Json | null
+        }
+        Update: {
+          action_plan?: Json | null
+          agent_trace?: Json | null
+          case_id?: string
+          created_at?: string | null
+          current_agent?: string | null
+          evidence_inventory?: Json | null
+          fact_confirmation_status?: string | null
+          generated_documents?: Json | null
+          human_review_flags?: Json | null
+          id?: string
+          language_preference?: string | null
+          legal_mapping?: Json | null
+          ocr_documents?: Json | null
+          pipeline_status?: string | null
+          raw_narrative?: string | null
+          reasoning_trace?: Json | null
+          retrieved_chunks?: Json | null
+          state_jurisdiction?: string | null
+          structured_facts?: Json | null
+          updated_at?: string | null
+          user_feedback?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_state_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: true
+            referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      case_timeline: {
+        Row: {
+          agent_name: string | null
+          case_id: string
+          created_at: string | null
+          description: string | null
+          event_type: string
+          id: string
+          metadata: Json | null
+        }
+        Insert: {
+          agent_name?: string | null
+          case_id: string
+          created_at?: string | null
+          description?: string | null
+          event_type: string
+          id?: string
+          metadata?: Json | null
+        }
+        Update: {
+          agent_name?: string | null
+          case_id?: string
+          created_at?: string | null
+          description?: string | null
+          event_type?: string
+          id?: string
+          metadata?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_timeline_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       cases: {
         Row: {
           analysis_duration_ms: number | null
@@ -277,6 +395,117 @@ export type Database = {
         }
         Relationships: []
       }
+      evidence: {
+        Row: {
+          case_id: string
+          citizen_id: string
+          created_at: string | null
+          date_of_evidence: string | null
+          evidence_type: string | null
+          file_name: string
+          file_type: string | null
+          file_url: string
+          id: string
+          is_processed: boolean | null
+          ocr_summary: string | null
+          ocr_text: string | null
+          relevance_score: number | null
+          tags: Json | null
+        }
+        Insert: {
+          case_id: string
+          citizen_id: string
+          created_at?: string | null
+          date_of_evidence?: string | null
+          evidence_type?: string | null
+          file_name: string
+          file_type?: string | null
+          file_url: string
+          id?: string
+          is_processed?: boolean | null
+          ocr_summary?: string | null
+          ocr_text?: string | null
+          relevance_score?: number | null
+          tags?: Json | null
+        }
+        Update: {
+          case_id?: string
+          citizen_id?: string
+          created_at?: string | null
+          date_of_evidence?: string | null
+          evidence_type?: string | null
+          file_name?: string
+          file_type?: string | null
+          file_url?: string
+          id?: string
+          is_processed?: boolean | null
+          ocr_summary?: string | null
+          ocr_text?: string | null
+          relevance_score?: number | null
+          tags?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "evidence_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "evidence_citizen_id_fkey"
+            columns: ["citizen_id"]
+            isOneToOne: false
+            referencedRelation: "citizen_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      feedback: {
+        Row: {
+          case_id: string
+          citizen_id: string
+          comment: string | null
+          created_at: string | null
+          feedback_type: string
+          id: string
+          section: string
+        }
+        Insert: {
+          case_id: string
+          citizen_id: string
+          comment?: string | null
+          created_at?: string | null
+          feedback_type: string
+          id?: string
+          section: string
+        }
+        Update: {
+          case_id?: string
+          citizen_id?: string
+          comment?: string | null
+          created_at?: string | null
+          feedback_type?: string
+          id?: string
+          section?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "feedback_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "feedback_citizen_id_fkey"
+            columns: ["citizen_id"]
+            isOneToOne: false
+            referencedRelation: "citizen_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       lawyer_case_history: {
         Row: {
           court_type: string | null
@@ -353,7 +582,10 @@ export type Database = {
           phone: string | null
           practice_district: string | null
           practice_state: string | null
+          primary_category: string | null
+          professional_title: string | null
           profile_photo_url: string | null
+          response_time_hours: number | null
           specialisations: Database["public"]["Enums"]["legal_domain"][] | null
           state_bar_council: string | null
           total_cases: number | null
@@ -385,7 +617,10 @@ export type Database = {
           phone?: string | null
           practice_district?: string | null
           practice_state?: string | null
+          primary_category?: string | null
+          professional_title?: string | null
           profile_photo_url?: string | null
+          response_time_hours?: number | null
           specialisations?: Database["public"]["Enums"]["legal_domain"][] | null
           state_bar_council?: string | null
           total_cases?: number | null
@@ -417,7 +652,10 @@ export type Database = {
           phone?: string | null
           practice_district?: string | null
           practice_state?: string | null
+          primary_category?: string | null
+          professional_title?: string | null
           profile_photo_url?: string | null
+          response_time_hours?: number | null
           specialisations?: Database["public"]["Enums"]["legal_domain"][] | null
           state_bar_council?: string | null
           total_cases?: number | null
@@ -766,6 +1004,38 @@ export type Database = {
         }
         Relationships: []
       }
+      user_sessions: {
+        Row: {
+          active_case_id: string | null
+          created_at: string | null
+          id: string
+          last_activity: string | null
+          user_id: string
+        }
+        Insert: {
+          active_case_id?: string | null
+          created_at?: string | null
+          id?: string
+          last_activity?: string | null
+          user_id: string
+        }
+        Update: {
+          active_case_id?: string | null
+          created_at?: string | null
+          id?: string
+          last_activity?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_sessions_active_case_id_fkey"
+            columns: ["active_case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -816,6 +1086,27 @@ export type Database = {
         | "corruption"
         | "civil"
         | "other"
+        | "tax"
+        | "corporate"
+        | "intellectual_property"
+        | "constitutional"
+        | "banking_finance"
+        | "insurance"
+        | "matrimonial"
+        | "immigration"
+        | "environmental"
+        | "medical_negligence"
+        | "motor_accident"
+        | "cheque_bounce"
+        | "debt_recovery"
+        | "arbitration"
+        | "service_matters"
+        | "land_acquisition"
+        | "wills_succession"
+        | "domestic_violence"
+        | "pocso"
+        | "sc_st_atrocities"
+        | "divorce"
       notification_type:
         | "new_case_match"
         | "offer_received"
@@ -997,6 +1288,27 @@ export const Constants = {
         "corruption",
         "civil",
         "other",
+        "tax",
+        "corporate",
+        "intellectual_property",
+        "constitutional",
+        "banking_finance",
+        "insurance",
+        "matrimonial",
+        "immigration",
+        "environmental",
+        "medical_negligence",
+        "motor_accident",
+        "cheque_bounce",
+        "debt_recovery",
+        "arbitration",
+        "service_matters",
+        "land_acquisition",
+        "wills_succession",
+        "domestic_violence",
+        "pocso",
+        "sc_st_atrocities",
+        "divorce",
       ],
       notification_type: [
         "new_case_match",
