@@ -486,17 +486,13 @@ export default function LawyerCaseMarketplace() {
       const assignedCaseIds = new Set((pipelineData ?? []).map(p => p.case_id))
 
       // 4. Fetch cases that are seeking a lawyer (Available tab)
-      let query = supabase
+      const query = supabase
         .from('cases')
         // keep citizen anonymous for lawyers: do not fetch citizen_id
         .select('id, title, domain, status, state, district, incident_description, incident_date, budget_min, budget_max, confidence_score, created_at')
         .eq('is_seeking_lawyer', true)
         .eq('status', 'seeking_lawyer')
         .order('created_at', { ascending: false })
-
-      if (specialisations.length > 0) {
-        query = query.in('domain', specialisations)
-      }
 
       const { data: casesData, error: casesError } = await query
 
@@ -740,7 +736,7 @@ export default function LawyerCaseMarketplace() {
               Case Marketplace
             </h1>
             <p className="text-gray-600 dark:text-white/70 text-[15px] font-sans">
-              Browse unassigned cases matching your specialisations and send offers to represent clients.
+              Browse unassigned cases and send offers to represent clients.
             </p>
             {!(activeTab === 'left' ? isLoading : offeredLoading) && (
               <div className={`mt-3 inline-flex items-center gap-2 text-xs font-sans px-3 py-1 rounded-full ${activeTab === 'left' ? statusPillClass : (offeredError ? statusPillClass : statusPillClass)}`}>
@@ -749,15 +745,6 @@ export default function LawyerCaseMarketplace() {
                 ? (dbError ? `Error: ${dbError}` : `${filteredCases.length} of ${allCases.length} cases shown`)
                 : (offeredError ? `Error: ${offeredError}` : `${filteredDispatches.length} of ${incomingDispatches.length} requests shown`)
               }
-              </div>
-            )}
-            {lawyerProfile && (
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {(lawyerProfile.specialisations ?? []).map(spec => (
-                  <span key={spec} className="px-2.5 py-0.5 bg-[#997953]/10 dark:bg-[#cdaa80]/15 rounded-full text-[11px] font-sans text-[#997953] dark:text-[#cdaa80] font-medium">
-                    {formatDomain(spec)}
-                  </span>
-                ))}
               </div>
             )}
           </div>
@@ -1156,7 +1143,7 @@ export default function LawyerCaseMarketplace() {
                           <div className="flex gap-2 flex-wrap">
                             <button
                               type="button"
-                              onClick={(e) => { e.stopPropagation(); setSelectedDispatch({ dispatch, caseData }) }}
+                              onClick={(e) => { e.stopPropagation(); setSelectedDispatch({ dispatch, caseData, offerStage: incoming?.offerStage ?? null, offerSentAt: incoming?.offerSentAt ?? null }) }}
                               className={`md:hidden px-5 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 text-center mt-2 w-full max-w-[160px] ${hoveredCard === dispatch.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'}`}
                             >
                               View case
@@ -1167,7 +1154,7 @@ export default function LawyerCaseMarketplace() {
                                 e.stopPropagation()
                                 setOfferAmountInput('25000')
                                 setOfferMessageInput('Scope, timeline, engagement type, and next steps...')
-                                setSelectedDispatch({ dispatch, caseData })
+                                setSelectedDispatch({ dispatch, caseData, offerStage: incoming?.offerStage ?? null, offerSentAt: incoming?.offerSentAt ?? null })
                               }}
                               disabled={isOfferSent}
                               className={`md:hidden px-5 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 text-center mt-2 w-full max-w-[180px] ${hoveredCard === dispatch.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'} disabled:opacity-60`}
@@ -1190,7 +1177,7 @@ export default function LawyerCaseMarketplace() {
                         <div className="flex gap-2">
                           <button
                             type="button"
-                            onClick={(e) => { e.stopPropagation(); setSelectedDispatch({ dispatch, caseData }) }}
+                            onClick={(e) => { e.stopPropagation(); setSelectedDispatch({ dispatch, caseData, offerStage: incoming?.offerStage ?? null, offerSentAt: incoming?.offerSentAt ?? null }) }}
                             className={`px-6 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 mt-4 text-center ${hoveredCard === dispatch.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'}`}
                           >
                             View case
@@ -1201,7 +1188,7 @@ export default function LawyerCaseMarketplace() {
                               e.stopPropagation()
                               setOfferAmountInput('25000')
                               setOfferMessageInput('Scope, timeline, engagement type, and next steps...')
-                              setSelectedDispatch({ dispatch, caseData })
+                              setSelectedDispatch({ dispatch, caseData, offerStage: incoming?.offerStage ?? null, offerSentAt: incoming?.offerSentAt ?? null })
                             }}
                             disabled={isOfferSent}
                             className={`px-6 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 mt-4 text-center ${hoveredCard === dispatch.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'} disabled:opacity-60`}
