@@ -68,7 +68,7 @@ export default function Header({
   const headerRef = useRef<HTMLElement>(null);
   const bgRef = useRef<HTMLDivElement>(null);
   const mobileMenuRef = useRef<HTMLDivElement>(null);
-  const menuItemRefsRef = useRef<(HTMLAnchorElement | null)[]>([]);
+  const menuItemRefsRef = useRef<(HTMLElement | null)[]>([]);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const { theme, mounted } = useTheme();
 
