@@ -346,8 +346,11 @@ export default function Header({
               ref={(el) => {
                 if (el) menuItemRefsRef.current[navLinks.length] = el;
               }}
-              className="mt-4 flex justify-center border-t border-current/10 pt-4"
+              className="mt-4 flex items-center justify-center gap-4 border-t border-current/10 pt-4"
             >
+              <div className="scale-90">
+                <ThemeToggle />
+              </div>
               {rightIcon || <LoginButton hoverTextColor={resolvedTheme.bgScrolled} />}
             </div>
 
@@ -361,14 +364,6 @@ export default function Header({
                 {rightAction}
               </div>
             )}
-            <div
-              ref={(el) => {
-                if (el) menuItemRefsRef.current[navLinks.length + 2] = el;
-              }}
-              className="mt-4 pt-4 border-t border-current/10 flex justify-center scale-90"
-            >
-              <ThemeToggle />
-            </div>
           </div>
         )}
       </div>
