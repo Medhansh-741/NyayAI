@@ -5,6 +5,7 @@ import gsap from 'gsap';
 import { Sidebar } from '../../../../components/sidebar';
 import { supabase } from '@/lib/supabase/client';
 import type { Database } from '@/types/supabase';
+import Link from 'next/link';
 
 type LawyerProfile = Database['public']['Tables']['lawyer_profiles']['Row'];
 
@@ -509,11 +510,12 @@ export default function LawyerMarketplace() {
                 : `Adv. ${lawyer.full_name}`
 
               return (
-                <div
+                <Link
+                  href={`/citizen/lawyer/${lawyer.id}`}
                   key={lawyer.id}
                   onMouseEnter={() => setHoveredCard(lawyer.id)}
                   onMouseLeave={() => setHoveredCard(null)}
-                  className={`bg-white dark:bg-[#cdaa80] text-[#0f1e3f] rounded-xl p-6 md:p-8 transition-all duration-300 ease-out cursor-pointer relative overflow-hidden shadow-lg border border-gray-100 dark:border-transparent ${hoveredCard === lawyer.id ? 'transform -translate-y-1 shadow-2xl brightness-105' : ''}`}
+                  className={`block bg-white dark:bg-[#cdaa80] text-[#0f1e3f] rounded-xl p-6 md:p-8 transition-all duration-300 ease-out cursor-pointer relative overflow-hidden shadow-lg border border-gray-100 dark:border-transparent ${hoveredCard === lawyer.id ? 'transform -translate-y-1 shadow-2xl brightness-105' : ''}`}
                 >
                   <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'radial-gradient(#0f1e3f 1px, transparent 1px)', backgroundSize: '20px 20px' }} />
 
@@ -580,9 +582,9 @@ export default function LawyerMarketplace() {
                             </div>
                           )}
                         </div>
-                        <button className={`md:hidden px-5 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 ${hoveredCard === lawyer.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'}`}>
+                        <div className="md:hidden px-5 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 text-center mt-2 w-full max-w-[120px] ${hoveredCard === lawyer.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'}">
                           View Profile
-                        </button>
+                        </div>
                       </div>
                     </div>
 
@@ -597,12 +599,12 @@ export default function LawyerMarketplace() {
                           {responseTime}
                         </div>
                       </div>
-                      <button className={`px-6 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 mt-4 ${hoveredCard === lawyer.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'}`}>
+                      <div className={`px-6 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 mt-4 text-center ${hoveredCard === lawyer.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'}`}>
                         View Profile
-                      </button>
+                      </div>
                     </div>
                   </div>
-                </div>
+                </Link>
               )
             })
           )}
