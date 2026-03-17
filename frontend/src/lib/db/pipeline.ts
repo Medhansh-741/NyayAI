@@ -97,7 +97,8 @@ export async function acceptOffer(pipelineId: string, caseId: string) {
     .from('cases')
     .update({
       status: 'lawyer_matched',
-      lawyer_matched_at: new Date().toISOString()
+      lawyer_matched_at: new Date().toISOString(),
+      is_seeking_lawyer: false,
     })
     .eq('id', caseId)
 

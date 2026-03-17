@@ -2,6 +2,19 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Getting Started
 
+### Configure backend URL
+
+The citizen chatbot UI calls the backend `/analyze` endpoint.
+
+- Default: `http://localhost:8001`
+- Override by setting `NEXT_PUBLIC_BACKEND_URL` before running the dev server, for example:
+
+```bash
+export NEXT_PUBLIC_BACKEND_URL="http://localhost:8001"
+```
+
+Make sure your backend allows CORS from `http://localhost:3000`.
+
 First, run the development server:
 
 ```bash
