@@ -13,8 +13,8 @@ class Party(BaseModel):
     description: Optional[str] = None
 
 class StructuredFacts(BaseModel):
-    incident_type: str
-    incident_summary: str
+    incident_type: Optional[str] = None
+    incident_summary: Optional[str] = None
     incident_date: Optional[str] = None
     parties: list[Party] = Field(default_factory=list)
     timeline: list[str] = Field(default_factory=list)
@@ -155,6 +155,7 @@ class CaseState(BaseModel):
     fact_confirmation_status: Literal["pending", "confirmed", "corrected"] = "pending"
     intake_status: Literal["collecting_info", "awaiting_user_response", "complete"] = "collecting_info"
     follow_up_questions: list[str] = Field(default_factory=list)
+    conversational_response: Optional[str] = None
 
     # Agent 2
     legal_mapping: Optional[LegalMapping] = None

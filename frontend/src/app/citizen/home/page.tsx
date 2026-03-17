@@ -116,11 +116,8 @@ export default function CitizenHome() {
       };
 
       if (result.intake_status === "awaiting_user_response") {
-        aiMessage.type = 'follow_up';
-        aiMessage.content = "To provide the best guidance, I need a few more details:";
-        aiMessage.metadata = {
-          questions: result.case_state?.follow_up_questions || []
-        };
+        aiMessage.type = 'text'; // Changed to text to avoid button rendering
+        aiMessage.content = result.case_state?.conversational_response || "To provide the best guidance, I need a few more details.";
       } else if (result.intake_status === "complete") {
         aiMessage.type = 'analysis_result';
         aiMessage.content = "Your legal analysis is complete. Here is a summary of our findings and the recommended path forward.";
@@ -133,7 +130,8 @@ export default function CitizenHome() {
           reasoningTrace: result.case_state?.reasoning_trace
         };
       } else {
-        aiMessage.content = "I've processed your input. How else can I help you today?";
+        // Fallback for greetings or simple responses from conversational sync
+        aiMessage.content = result.case_state?.conversational_response || "I've processed your input. How else can I help you today?";
       }
 
       setMessages(prev => [...prev, aiMessage]);
@@ -213,20 +211,7 @@ export default function CitizenHome() {
                   {msg.content}
                 </p>
 
-                {/* Follow-up Questions */}
-                {msg.type === 'follow_up' && msg.metadata?.questions && (
-                  <div className="mt-4 flex flex-col gap-2">
-                    {msg.metadata.questions.map((q, i) => (
-                      <button
-                        key={i}
-                        onClick={() => handleSend(q)}
-                        className="text-left text-[14px] px-4 py-2 rounded-lg border border-[#cdaa80]/30 hover:border-[#cdaa80] hover:bg-[#cdaa80]/5 transition-all text-[#997953] dark:text-[#cdaa80] font-sans backdrop-blur-md active:scale-[0.98]"
-                      >
-                        {q}
-                      </button>
-                    ))}
-                  </div>
-                )}
+                {/* Follow-up Questions - REMOVED for SYNC Chat */}
 
                 {/* Analysis Result Card */}
                 {msg.type === 'analysis_result' && msg.metadata && (
@@ -389,10 +374,10 @@ export default function CitizenHome() {
                                         <span>📄 {key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</span>
                                         <div className="flex items-center gap-2">
                                           {doc.pdf_url && (
-                                            <a href={`file:///${doc.pdf_url.replace(/\\/g, '/')}`} className="text-[10px] px-2 py-1 rounded bg-[#997953]/10 dark:bg-[#cdaa80]/10 text-[#997953] dark:text-[#cdaa80] font-bold uppercase hover:bg-[#997953]/20 dark:hover:bg-[#cdaa80]/20 transition-colors" onClick={(e) => e.stopPropagation()}>PDF ↓</a>
+                                            <a href={`http://localhost:8000/download/${doc.pdf_url.split(/[\\/]/).pop()}`} download className="text-[10px] px-2 py-1 rounded bg-[#997953]/10 dark:bg-[#cdaa80]/10 text-[#997953] dark:text-[#cdaa80] font-bold uppercase hover:bg-[#997953]/20 dark:hover:bg-[#cdaa80]/20 transition-colors" onClick={(e) => e.stopPropagation()}>PDF ↓</a>
                                           )}
                                           {doc.docx_url && (
-                                            <a href={`file:///${doc.docx_url.replace(/\\/g, '/')}`} className="text-[10px] px-2 py-1 rounded bg-[#997953]/10 dark:bg-[#cdaa80]/10 text-[#997953] dark:text-[#cdaa80] font-bold uppercase hover:bg-[#997953]/20 dark:hover:bg-[#cdaa80]/20 transition-colors" onClick={(e) => e.stopPropagation()}>DOCX ↓</a>
+                                            <a href={`http://localhost:8000/download/${doc.docx_url.split(/[\\/]/).pop()}`} download className="text-[10px] px-2 py-1 rounded bg-[#997953]/10 dark:bg-[#cdaa80]/10 text-[#997953] dark:text-[#cdaa80] font-bold uppercase hover:bg-[#997953]/20 dark:hover:bg-[#cdaa80]/20 transition-colors" onClick={(e) => e.stopPropagation()}>DOCX ↓</a>
                                           )}
                                         </div>
                                       </summary>

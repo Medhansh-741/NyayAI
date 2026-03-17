@@ -25,30 +25,31 @@ MAX_TOKENS = 2048
 MAX_FOLLOWUP_TOKENS = 200
 
 
-INTAKE_SYSTEM_PROMPT = """You are the Intake Agent for Nyay AI, a legal assistance platform for Indian citizens.
+INTAKE_SYSTEM_PROMPT = """You are a Professional Legal Intake Officer at a high-end Indian law firm.
 
-Your job is to analyse a citizen's raw narrative and extract a precise, structured incident report.
+Your job is to analyse a citizen's raw narrative and extract a precise, structured incident report. 
 
-IMPORTANT RULES:
-1. Return ONLY valid JSON — no preamble, no markdown fences, no explanation.
-2. Detect the user's language (hindi / english / hinglish) from the narrative.
-3. Detect the Indian state/jurisdiction from location clues in the narrative.
-4. Be conservative — only assert facts clearly present in the narrative.
-5. List missing information ONLY if it's ABSOLUTELY CRITICAL (e.g., missing the core incident type or parties). If the incident is reasonably described, return an empty list for missing_information to allow the analysis to proceed.
+TONE & BEHAVIOR:
+1. PERSONA: Professional Legal Intake Clerk. Direct and efficient.
+2. DELTA-ONLY: The `new_facts` array MUST strictly contain only information provided in the VERY LAST user message.
+3. ABSOLUTELY NO RECAP: Do NOT include facts in `new_facts` that were already mentioned in the prior chat history. If the user repeats themselves, `new_facts` should be empty.
+4. POINTED QUESTIONS: Focus `follow_up_query` on the highest priority missing data.
+5. NO FLUFF: No "I have noted that" or "Acknowledging your facts" phrases.
 
-Classify incident_type as exactly one of:
-consumer | tenant | labour | criminal | cyber | property | family | rti | corruption
+Return ONLY valid JSON.
 
-Classify urgency_level as exactly one of:
-immediate | standard | low
+If the user is just saying hello, return "GREETING" in intent. If the input is nonsensical/gibberish, return "ABSURD" in intent. Otherwise return "LEGAL".
 
-Return the exact JSON structure matching this schema:
 {
+  "intent": "string (GREETING/ABSURD/LEGAL)",
+  "new_facts": ["string (Only NEWly discovered facts from the current turn)"],
+  "follow_up_query": "string (A professional direct question for missing information)",
+  "conversational_response": "string (OPTIONAL: Only used for GREETING or ABSURD intents. For LEGAL, leave null as it will be constructed from new_facts and follow_up_query.)",
   "language_preference": "string (hindi/english/hinglish)",
   "state_jurisdiction": "string (e.g. Delhi, Maharashtra) or null",
   "structured_facts": {
-    "incident_type": "string",
-    "incident_summary": "string",
+    "incident_type": "string or null",
+    "incident_summary": "string or null",
     "incident_date": "string or null",
     "parties": [
       {
@@ -62,16 +63,14 @@ Return the exact JSON structure matching this schema:
     "urgency_level": "string",
     "monetary_value_inr": "number or null",
     "key_facts": ["string"],
-    "missing_information": [],
+    "missing_information": ["string"],
     "dispute_context": "string or null"
   },
   "evidence_inventory": [
     {
-      "evidence_type": "string",
-      "date_of_evidence": "string or null",
-      "relevance_score": "number (0.0 to 1.0)",
-      "description": "string",
-      "tags": ["string"]
+      "file_reference": "string (e.g. invoice, medical report)",
+      "evidence_type": "string (receipt/agreement/photo/other)",
+      "description": "string (concise description)"
     }
   ]
 }
@@ -178,17 +177,18 @@ def _call_groq(narrative: str, ocr_context: str, client: Groq):
     )
 
     raw = response.choices[0].message.content.strip()
-
-    raw = re.sub(r"^```(?:json)?\s*", "", raw)
-    raw = re.sub(r"\s*```$", "", raw)
-    print(raw)
+    
+    # Robust JSON extraction
     try:
-        return json.loads(raw)
-
-    except json.JSONDecodeError as exc:
-
-        logger.error("JSON parse failed")
-
+        start_idx = raw.find('{')
+        end_idx = raw.rfind('}') + 1
+        if start_idx != -1 and end_idx != 0:
+            raw_json = raw[start_idx:end_idx]
+            return json.loads(raw_json)
+        else:
+            raise ValueError("No JSON found in response")
+    except (json.JSONDecodeError, ValueError) as exc:
+        logger.error(f"JSON parse failed: {exc}")
         raise ValueError(f"{GROQ_MODEL} returned non-JSON output") from exc
 
 
@@ -210,8 +210,8 @@ def _build_structured_facts(data: dict):
     urgency = raw_urgency if raw_urgency in VALID_URGENCY else "standard"
 
     return StructuredFacts(
-        incident_type=sf.get("incident_type") or "consumer",
-        incident_summary=sf.get("incident_summary") or "No summary provided.",
+        incident_type=sf.get("incident_type"),
+        incident_summary=sf.get("incident_summary"),
         incident_date=sf.get("incident_date"),
         parties=parties,
         timeline=sf.get("timeline", []),
@@ -228,12 +228,21 @@ def _build_evidence_inventory(data: dict, ocr_docs):
     items = []
 
     for ev in data.get("evidence_inventory", []):
+        # Type guard: LLM might return a string instead of an object
+        if isinstance(ev, str):
+            items.append(EvidenceItem(
+                file_reference=ev,
+                evidence_type="other",
+                description=f"User mentioned having: {ev}",
+                relevance_score=0.7
+            ))
+            continue
 
         items.append(EvidenceItem(
-            file_reference=ev.get("file_reference"),
+            file_reference=ev.get("file_reference") or "unknown_doc",
             evidence_type=ev.get("evidence_type") or "other",
             date_of_evidence=ev.get("date_of_evidence"),
-            relevance_score=float(ev.get("relevance_score") or 0.5),
+            relevance_score=float(ev.get("relevance_score") or 0.6),
             description=ev.get("description") or "Document attachment",
             tags=ev.get("tags", []),
         ))
@@ -250,6 +259,27 @@ def _build_evidence_inventory(data: dict, ocr_docs):
         ))
 
     return items
+
+
+# ─────────────────────────────────────────────
+# Completeness scoring
+# ─────────────────────────────────────────────
+
+def _compute_completeness_score(state: CaseState) -> int:
+    """Count how many of the 5 critical intake fields are filled."""
+    score = 0
+    sf = state.structured_facts
+    if sf.incident_type:
+        score += 1
+    if sf.incident_summary:
+        score += 1
+    if sf.parties and len(sf.parties) >= 1:
+        score += 1
+    if sf.key_facts and len(sf.key_facts) >= 1:
+        score += 1
+    if state.state_jurisdiction:
+        score += 1
+    return score
 
 
 # ─────────────────────────────────────────────
@@ -340,8 +370,37 @@ def run(state: CaseState, groq_client: Optional[Groq] = None, sarvam_client: Opt
     )
 
     try:
-
         extracted = _call_groq(state.raw_narrative, ocr_context, groq)
+        
+        intent = extracted.get("intent", "LEGAL")
+        state.conversational_response = extracted.get("conversational_response")
+        
+        # If intent is LEGAL, we construct the response from points
+        if intent == "LEGAL":
+            new_facts = extracted.get("new_facts", [])
+            query = extracted.get("follow_up_query", "")
+            
+            # Filter out empty or recap-style facts
+            clean_facts = [f for f in new_facts if f and len(f) > 3]
+            
+            if clean_facts:
+                fact_list = "\n".join([f"• {f}" for f in clean_facts])
+                state.conversational_response = f"{fact_list}\n\n{query}"
+            else:
+                state.conversational_response = query
+
+        # Fallback Generator
+        if not state.conversational_response:
+            if intent == "GREETING":
+                state.conversational_response = "Greetings. I am your Legal Intake Assistant. Please provide the details of the incident you wish to report."
+            elif intent == "ABSURD":
+                state.conversational_response = "I am unable to process your last input. To assist you, I require a description of a legal incident, such as a consumer dispute or property matter. Please provide specific details."
+            else:
+                missing = extracted.get("structured_facts", {}).get("missing_information", [])
+                if missing:
+                    state.conversational_response = f"I have recorded the initial facts. To proceed, I specifically require details regarding: {', '.join(missing[:2])}."
+                else:
+                    state.conversational_response = "The necessary facts have been gathered. I am proceeding with the legal analysis."
 
     except ValueError as exc:
 
@@ -357,20 +416,36 @@ def run(state: CaseState, groq_client: Optional[Groq] = None, sarvam_client: Opt
 
     state.structured_facts = _build_structured_facts(extracted)
 
+    # Ensure facts are null for non-legal intents to prevent early pipeline trigger
+    if intent in ["GREETING", "ABSURD"]:
+        state.structured_facts.incident_type = None
+        state.structured_facts.incident_summary = None
+
     state.evidence_inventory = _build_evidence_inventory(extracted, ocr_docs)
 
     missing = state.structured_facts.missing_information
 
-    if missing:
-
-        state.follow_up_questions = _generate_followup_questions(
-            narrative=state.raw_narrative,
-            missing_information=missing,
-            groq_client=groq,
-        )
-
+    # IMPORTANT: If it's a greeting or absurd, we NEVER mark it as complete.
+    if intent in ["GREETING", "ABSURD"]:
         state.intake_status = "awaiting_user_response"
+        # Ensure there's at least one question to keep the bot conversational
+        if not state.follow_up_questions:
+            state.follow_up_questions = ["Could you please describe your legal situation?"]
+        return state
 
+    # ── Completeness threshold: skip follow-ups if query is detailed enough ──
+    completeness = _compute_completeness_score(state)
+    logger.info(f"[Agent1] Completeness score: {completeness}/5 | Missing: {missing}")
+
+    if completeness >= 4:
+        # Query is detailed enough — proceed directly to full analysis
+        logger.info(f"[Agent1] Score >= 4, skipping follow-ups → marking complete")
+        state.intake_status = "complete"
+    elif missing:
+        # Ask AT MOST 1 question, no extra Groq call
+        top_missing = missing[0]
+        state.follow_up_questions = [f"Could you provide {top_missing.lower()}?"]
+        state.intake_status = "awaiting_user_response"
         return state
 
     state.intake_status = "complete"
