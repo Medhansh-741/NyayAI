@@ -73,6 +73,16 @@ export default function CaseHistory() {
     setOffers([])
     if (!caseRow) return
 
+    // Always fetch the latest case row for the modal so status + AI draft fields are synced.
+    const { data: freshCase, error: freshErr } = await supabase
+      .from('cases')
+      .select('*')
+      .eq('id', caseId)
+      .maybeSingle()
+    if (!freshErr && freshCase) {
+      setSelectedCase(freshCase as CaseRow)
+    }
+
     setOffersLoading(true)
     const { data: pipelineRows, error: pipelineErr } = await getCasePipelineForCitizen(caseRow.id)
     if (pipelineErr) setOffersError(pipelineErr.message)
@@ -512,11 +522,15 @@ export default function CaseHistory() {
                                 <div className="text-sm font-sans text-[#2f261f] dark:text-white/85 font-medium">
                                   {typeof o.offer_amount === 'number' ? `₹${o.offer_amount.toLocaleString('en-IN')}` : 'Offer received'}
                                 </div>
-                                {o.offer_message && (
-                                  <div className="mt-1 text-[12px] font-sans text-[#5b4b3d] dark:text-white/70 break-words">
-                                    {o.offer_message}
-                                  </div>
-                                )}
+                                {(() => {
+                                  const offerText = (o as { offer_message?: string; offer_note?: string }).offer_message ?? o.offer_note
+                                  if (!offerText) return null
+                                  return (
+                                    <div className="mt-1 text-[12px] font-sans text-[#5b4b3d] dark:text-white/70 break-words">
+                                      {offerText}
+                                    </div>
+                                  )
+                                })()}
                                 <div className="mt-1 text-[11px] font-sans text-[#5b4b3d] dark:text-white/60">
                                   {o.offer_sent_at ? new Date(o.offer_sent_at).toLocaleString('en-IN') : ''}
                                 </div>

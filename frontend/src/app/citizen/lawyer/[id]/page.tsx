@@ -8,8 +8,11 @@ import { Database } from '../../../../types/supabase';
 import { BadgeCheck, ArrowLeft, FileText, Scale, Phone, Mail } from 'lucide-react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase/client';
-import { getActiveCaseForUser } from '@/lib/db/sessions';
+import { getActiveCaseForUser, setActiveCaseForUser } from '@/lib/db/sessions';
 import { createBriefDispatch } from '@/lib/db/dispatches';
+import { getCitizenCases } from '@/lib/db/cases';
+import * as Dialog from '@radix-ui/react-dialog'
+import * as Select from '@radix-ui/react-select'
 
 // Register ScrollTrigger plugin
 if (typeof window !== 'undefined') {
@@ -29,6 +32,24 @@ export default function LawyerProfilePage({ params }: { params: Promise<{ id: st
   const [loading, setLoading] = useState(true);
   const [requesting, setRequesting] = useState(false)
   const [requestMsg, setRequestMsg] = useState<string | null>(null)
+  const [requestOpen, setRequestOpen] = useState(false)
+  const [myCases, setMyCases] = useState<Database['public']['Tables']['cases']['Row'][]>([])
+  const [casePickLoading, setCasePickLoading] = useState(false)
+  const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null)
+  const [introMessage, setIntroMessage] = useState('')
+  const [introDirty, setIntroDirty] = useState(false)
+
+  const buildIntroDraft = (c: Database['public']['Tables']['cases']['Row'] | null) => {
+    const titlePart = c?.title ? `: "${c.title}"` : ''
+    const domainPart = c?.domain ? String(c.domain).replace(/_/g, ' ') : 'this domain'
+    const summary = c?.incident_description ? String(c.incident_description).slice(0, 500) : ''
+    return (
+      `Hi, I’m reaching out regarding my case${titlePart}.\n\n` +
+      `${summary ? `Summary: ${summary}\n\n` : ''}` +
+      `I’m looking for a lawyer experienced in ${domainPart}.\n` +
+      `Please review the AI case draft and let me know next steps.`
+    )
+  }
 
   useEffect(() => {
     const fetchLawyerData = async () => {
@@ -120,7 +141,44 @@ export default function LawyerProfilePage({ params }: { params: Promise<{ id: st
 
   }, { scope: containerRef, dependencies: [loading] });
 
-  const handleRequestLawyer = async () => {
+  const openRequestDialog = async () => {
+    setRequestMsg(null)
+    setIntroDirty(false)
+    setIntroMessage('')
+    setCasePickLoading(true)
+    try {
+      const { data: authData, error: authError } = await supabase.auth.getUser()
+      if (authError || !authData.user) {
+        setRequestMsg('Please log in to request a lawyer.')
+        return
+      }
+
+      const { data: sessionRow } = await getActiveCaseForUser(authData.user.id)
+      const activeCaseId = sessionRow?.active_case_id ?? null
+
+      const { data, error } = await getCitizenCases(authData.user.id)
+      if (error) {
+        setRequestMsg(error.message)
+        return
+      }
+
+      const list = (data ?? []).filter((c) => !!c.id)
+      setMyCases(list)
+      if (list.length === 0) {
+        setRequestMsg('Please start a case in the chatbot first so we can attach this request.')
+        return
+      }
+
+      const chosen = list.find((c) => c.id === activeCaseId) ?? list[0]
+      setSelectedCaseId(chosen.id)
+      setIntroMessage(buildIntroDraft(chosen))
+      setRequestOpen(true)
+    } finally {
+      setCasePickLoading(false)
+    }
+  }
+
+  const handleSendRequest = async () => {
     setRequestMsg(null)
     setRequesting(true)
     try {
@@ -129,48 +187,31 @@ export default function LawyerProfilePage({ params }: { params: Promise<{ id: st
         setRequestMsg('Please log in to request a lawyer.')
         return
       }
-
-      const intro = typeof window !== 'undefined'
-        ? window.prompt(
-            'Write a short message for the lawyer (intro intent message):',
-            'I need urgent help. Looking for someone experienced in this domain.'
-          )
-        : null
-
-      if (!intro || intro.trim().length === 0) {
-        setRequestMsg('Request cancelled.')
+      if (!selectedCaseId) {
+        setRequestMsg('Please select a case.')
+        return
+      }
+      if (!introMessage || introMessage.trim().length === 0) {
+        setRequestMsg('Please add an intro message.')
+        return
+      }
+      if (introMessage.trim().length < 20) {
+        setRequestMsg('Please provide a little more detail in your intro message (at least 20 characters).')
         return
       }
 
-      const { data: sessionRow } = await getActiveCaseForUser(authData.user.id)
-      let activeCaseId = sessionRow?.active_case_id ?? null
-
-      if (!activeCaseId) {
-        const { data: latestCase } = await supabase
-          .from('cases')
-          .select('id')
-          .eq('citizen_id', authData.user.id)
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle()
-        activeCaseId = latestCase?.id ?? null
-      }
-
-      if (!activeCaseId) {
-        setRequestMsg('Please start a case in the chatbot first so we can attach this request.')
-        return
-      }
+      await setActiveCaseForUser(authData.user.id, selectedCaseId)
 
       const { data: caseRow } = await supabase
         .from('cases')
         .select('id, title, domain, incident_description, budget_min, budget_max, preferred_state, preferred_district, case_brief, recommended_strategy, applicable_laws, confirmed_facts')
-        .eq('id', activeCaseId)
+        .eq('id', selectedCaseId)
         .maybeSingle()
 
       const { data: docs } = await supabase
         .from('case_documents')
         .select('file_name, file_url, document_type, created_at')
-        .eq('case_id', activeCaseId)
+        .eq('case_id', selectedCaseId)
         .order('created_at', { ascending: false })
 
       const aiBrief = {
@@ -198,20 +239,24 @@ export default function LawyerProfilePage({ params }: { params: Promise<{ id: st
       }
 
       const { error: dispatchErr } = await createBriefDispatch({
-        case_id: activeCaseId,
+        case_id: selectedCaseId,
         citizen_id: authData.user.id,
         lawyer_id: lawyerId,
-        intro_message: intro.trim(),
+        intro_message: introMessage.trim(),
         ai_brief: aiBrief,
         citizen_inputs: citizenInputs,
         documents: docs ?? [],
       })
 
       if (dispatchErr) {
-        setRequestMsg(dispatchErr.message)
+        const msg = dispatchErr instanceof Error
+          ? dispatchErr.message
+          : (dispatchErr as { message?: string }).message ?? 'Failed to send request.'
+        setRequestMsg(msg)
         return
       }
 
+      setRequestOpen(false)
       setRequestMsg('Your case has been sent to the lawyer. You’ll receive a response within 24–48 hours.')
     } finally {
       setRequesting(false)
@@ -291,11 +336,11 @@ export default function LawyerProfilePage({ params }: { params: Promise<{ id: st
                     <div className="flex flex-wrap gap-4 font-sans font-medium text-sm mt-2">
                       <button
                         type="button"
-                        onClick={() => void handleRequestLawyer()}
-                        disabled={requesting}
+                        onClick={() => void openRequestDialog()}
+                        disabled={requesting || casePickLoading}
                         className="action-btn flex items-center gap-2 px-6 py-2.5 border border-[#0f1e3f] text-[#d6b785] bg-[#0f1e3f] rounded-md hover:bg-[#0f1e3f]/90 hover:shadow-[0_0_15px_rgba(15,30,63,0.35)] transition-all duration-300 disabled:opacity-60"
                       >
-                        {requesting ? 'Sending request…' : 'Request this lawyer'}
+                        {casePickLoading ? 'Loading cases…' : requesting ? 'Sending request…' : 'Request this lawyer'}
                       </button>
                       <a 
                         href={`mailto:${lawyer.email || ''}`} 
@@ -317,6 +362,117 @@ export default function LawyerProfilePage({ params }: { params: Promise<{ id: st
                         {requestMsg}
                       </div>
                     )}
+
+                    <Dialog.Root open={requestOpen} onOpenChange={setRequestOpen}>
+                      <Dialog.Portal>
+                        <Dialog.Overlay className="fixed inset-0 bg-black/40 backdrop-blur-[1px] z-[9998]" />
+                        <Dialog.Content className="fixed left-1/2 top-1/2 w-[92vw] max-w-[720px] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white dark:bg-[#0a152e] border border-[#e3d4bf] dark:border-[#cdaa80]/25 shadow-2xl p-5 md:p-6 z-[9999]">
+                          <div className="flex items-start justify-between gap-4">
+                            <div>
+                              <Dialog.Title className="text-lg md:text-xl font-serif text-[#997953] dark:text-[#cdaa80]">
+                                Request this lawyer
+                              </Dialog.Title>
+                              <Dialog.Description className="mt-1 text-sm font-sans text-[#5b4b3d] dark:text-white/70">
+                                Choose the case you want to attach, then edit the intro message.
+                              </Dialog.Description>
+                            </div>
+                            <Dialog.Close
+                              disabled={requesting}
+                              className="rounded-lg px-3 py-1.5 text-sm font-sans border border-[#d8c1a1] dark:border-[#cdaa80]/30 hover:bg-[#f9f4ec] dark:hover:bg-[#12284f] disabled:opacity-60"
+                            >
+                              Close
+                            </Dialog.Close>
+                          </div>
+
+                          <div className="mt-4 space-y-4">
+                            <div className="rounded-xl border border-[#e7d9c7] dark:border-[#cdaa80]/20 p-3">
+                              <div className="text-[11px] uppercase tracking-wide font-bold text-[#997953] dark:text-[#cdaa80]">
+                                Select case
+                              </div>
+                              <div className="mt-2">
+                                <Select.Root
+                                  value={selectedCaseId ?? ''}
+                                  onValueChange={(v) => {
+                                    setSelectedCaseId(v)
+                                    const chosen = myCases.find((c) => c.id === v) ?? null
+                                    if (!introDirty) setIntroMessage(buildIntroDraft(chosen))
+                                  }}
+                                >
+                                  <Select.Trigger className="w-full flex items-center justify-between rounded-lg border border-[#0f1e3f]/20 bg-[#fdf9f3] dark:bg-[#12284f]/70 px-3 py-2 text-sm font-sans text-[#0f1e3f] dark:text-white/85">
+                                    <Select.Value placeholder="Pick a case" />
+                                    <Select.Icon className="text-[#0f1e3f]/60 dark:text-white/60">
+                                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 9l6 6 6-6" />
+                                      </svg>
+                                    </Select.Icon>
+                                  </Select.Trigger>
+                                  <Select.Portal>
+                                    <Select.Content className="z-[10000] overflow-hidden rounded-xl border border-[#e7d9c7] dark:border-[#cdaa80]/20 bg-white dark:bg-[#0a152e] shadow-2xl">
+                                      <Select.Viewport className="p-1 max-h-[280px] overflow-y-auto">
+                                        {myCases.map((c) => (
+                                          <Select.Item
+                                            key={c.id}
+                                            value={c.id}
+                                            className="px-3 py-2 rounded-lg text-sm font-sans text-[#0f1e3f] dark:text-white/85 cursor-pointer outline-none data-[highlighted]:bg-[#0f1e3f]/5 dark:data-[highlighted]:bg-[#213a56]"
+                                          >
+                                            <Select.ItemText>
+                                              {(c.title ?? 'Untitled case').slice(0, 60)}{c.created_at ? ` • ${new Date(c.created_at).toLocaleDateString('en-IN')}` : ''}
+                                            </Select.ItemText>
+                                          </Select.Item>
+                                        ))}
+                                      </Select.Viewport>
+                                    </Select.Content>
+                                  </Select.Portal>
+                                </Select.Root>
+                              </div>
+                            </div>
+
+                            <div className="rounded-xl border border-[#e7d9c7] dark:border-[#cdaa80]/20 p-3">
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="text-[11px] uppercase tracking-wide font-bold text-[#997953] dark:text-[#cdaa80]">
+                                  Intro message (editable)
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const chosen = selectedCaseId ? (myCases.find((c) => c.id === selectedCaseId) ?? null) : null
+                                    setIntroMessage(buildIntroDraft(chosen))
+                                    setIntroDirty(false)
+                                  }}
+                                  className="text-xs font-sans px-2.5 py-1 rounded-lg border border-[#0f1e3f]/20 hover:bg-[#0f1e3f]/5 dark:hover:bg-[#213a56]"
+                                >
+                                  Reset draft
+                                </button>
+                              </div>
+                              <textarea
+                                value={introMessage}
+                                onChange={(e) => { setIntroDirty(true); setIntroMessage(e.target.value) }}
+                                rows={6}
+                                className="mt-2 w-full rounded-lg border border-[#0f1e3f]/20 bg-[#fdf9f3] dark:bg-[#12284f]/70 px-3 py-2 text-sm font-sans text-[#0f1e3f] dark:text-white/85 outline-none focus:ring-2 focus:ring-[#cdaa80]/40"
+                                placeholder="Write a short message for the lawyer..."
+                              />
+                            </div>
+
+                            <div className="flex items-center justify-end gap-3">
+                              <Dialog.Close
+                                disabled={requesting}
+                                className="px-4 py-2 rounded-lg text-sm font-sans border border-[#0f1e3f]/20 hover:bg-[#0f1e3f]/5 dark:hover:bg-[#213a56] disabled:opacity-60"
+                              >
+                                Cancel
+                              </Dialog.Close>
+                              <button
+                                type="button"
+                                onClick={() => { void handleSendRequest() }}
+                                disabled={requesting || !selectedCaseId || introMessage.trim().length < 20}
+                                className="px-4 py-2 rounded-lg text-sm font-sans border border-[#0f1e3f] bg-[#0f1e3f] text-[#d6b785] hover:bg-[#0f1e3f]/90 disabled:opacity-60"
+                              >
+                                {requesting ? 'Sending…' : 'Send request'}
+                              </button>
+                            </div>
+                          </div>
+                        </Dialog.Content>
+                      </Dialog.Portal>
+                    </Dialog.Root>
                   </>
                 ) : (
                   <div className="animate-pulse flex flex-col gap-4 py-6">
