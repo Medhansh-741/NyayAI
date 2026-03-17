@@ -33,21 +33,26 @@ export interface FooterThemeColors {
 export interface FooterProps {
   /** Logo configuration */
   logoText?: string;
+<<<<<<< HEAD
+  logoIcon?: React.ElementType<{ size?: number; strokeWidth?: number; className?: string }>;
+
+=======
   logoIcon?: LucideIcon;
   
+>>>>>>> d81799a8b273c6a2dbaabbd1fb70c796dcb5754d
   /** Newsletter configuration */
   subscribePlaceholder?: string;
   subscribeButtonText?: string;
   onSubscribe?: (email: string) => void;
-  
+
   /** Middle section configuration */
   creditsText?: string;
   paletteColors?: ColorSwatch[];
-  
+
   /** Bottom section configuration */
   copyrightText?: string;
   socialLinks?: SocialLink[];
-  
+
   /** Theme & Color Overrides */
   themeColors?: Partial<FooterThemeColors>;
 }
@@ -150,18 +155,18 @@ export const Footer: React.FC<FooterProps> = ({
   };
 
   return (
-    <footer 
+    <footer
       style={dynamicStyles}
       className="w-full p-2 md:p-4 bg-[var(--footer-bg-light)] dark:bg-[var(--footer-bg-dark)] transition-colors duration-300"
     >
       {/* Inner Card Container */}
-      <div 
+      <div
         ref={footerRef}
         className="opacity-0 max-w-6xl mx-auto rounded-3xl border-2 border-[var(--footer-text-light)]/10 dark:border-[var(--footer-text-dark)]/20 p-4 md:p-6 
                    bg-[var(--footer-card-light)] dark:bg-[var(--footer-card-dark)] 
                    text-[var(--footer-text-light)] dark:text-[var(--footer-text-dark)] shadow-sm transition-colors duration-300"
       >
-        
+
         {/* Top Section */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 md:gap-5 pb-5 md:pb-6">
           <div className="flex items-center gap-3">
@@ -174,18 +179,18 @@ export const Footer: React.FC<FooterProps> = ({
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                 <Mail size={18} className="opacity-50" />
               </div>
-              <input 
-                type="email" 
+              <input
+                type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder={subscribePlaceholder} 
+                placeholder={subscribePlaceholder}
                 className="w-full pl-10 pr-4 py-2 bg-transparent border border-[var(--footer-text-light)] dark:border-[var(--footer-text-dark)] 
                            placeholder-[var(--footer-text-light)]/50 dark:placeholder-[var(--footer-text-dark)]/50 
                            focus:outline-none focus:ring-1 focus:ring-[var(--footer-accent)] transition-colors"
                 required
               />
             </div>
-            <button 
+            <button
               type="submit"
               onMouseEnter={handleMouseEnter}
               onMouseLeave={handleMouseLeave}
@@ -209,7 +214,7 @@ export const Footer: React.FC<FooterProps> = ({
             {socialLinks.map((social, index) => {
               const Icon = social.icon;
               return (
-                <a 
+                <a
                   key={index}
                   href={social.url}
                   aria-label={social.ariaLabel}

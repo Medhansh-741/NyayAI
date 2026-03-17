@@ -7,13 +7,16 @@ export async function GET(request: Request) {
   const code = searchParams.get('code')
   const next = searchParams.get('next') ?? null
   const error = searchParams.get('error')
+  // ✅ Read role hint passed from Google OAuth redirect
+  const roleHint = searchParams.get('role') === 'lawyer' ? 'lawyer' : 'citizen'
 
   if (error) {
     return NextResponse.redirect(`${origin}/login?error=${error}`)
   }
 
   if (code) {
-    const cookieStore = cookies() as any
+    const cookieStore = await cookies()
+
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -23,18 +26,19 @@ export async function GET(request: Request) {
             return cookieStore.get(name)?.value
           },
           set(name: string, value: string, options: Record<string, unknown>) {
-            cookieStore.set({ name, value, ...options })
+            cookieStore.set({ name, value, ...options } as any)
           },
           remove(name: string, options: Record<string, unknown>) {
-            cookieStore.set({ name, value: '', ...options })
-          }
-        }
+            cookieStore.set({ name, value: '', ...options } as any)
+          },
+        },
       }
     )
 
     const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code)
 
     if (exchangeError) {
+      console.error('Exchange error:', exchangeError)
       return NextResponse.redirect(`${origin}/login?error=exchange_failed`)
     }
 
@@ -45,17 +49,41 @@ export async function GET(request: Request) {
         return NextResponse.redirect(`${origin}${next}`)
       }
 
-      const { data: roleData } = await supabase
+      // Check if role already exists (returning user)
+      let { data: roleData } = await supabase
         .from('user_roles')
         .select('role')
         .eq('id', user.id)
         .single()
 
-      if (roleData?.role === 'lawyer') {
-        return NextResponse.redirect(`${origin}/portal/dashboard`)
+      // ✅ New Google user — insert as fallback (trigger + ON CONFLICT = safe)
+      if (!roleData) {
+        await supabase.from('user_roles').insert({ id: user.id, role: roleHint })
+
+        if (roleHint === 'citizen') {
+          await supabase.from('citizen_profiles').insert({
+            id: user.id,
+            email: user.email,
+            full_name: user.user_metadata?.full_name ?? user.user_metadata?.name ?? null,
+          })
+        } else {
+          await supabase.from('lawyer_profiles').insert({
+            id: user.id,
+            email: user.email ?? '',
+            full_name: user.user_metadata?.full_name ?? user.user_metadata?.name ?? '',
+          })
+        }
+
+        roleData = { role: roleHint }
       }
 
-      return NextResponse.redirect(`${origin}/dashboard`)
+      if (roleData.role === 'lawyer') {
+        return NextResponse.redirect(`${origin}/portal/dashboard`)
+      }
+      if (roleData.role === 'admin') {
+        return NextResponse.redirect(`${origin}/admin/dashboard`)
+      }
+      return NextResponse.redirect(`${origin}/citizen/home`)
     }
   }
 
