@@ -3,7 +3,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import gsap from 'gsap';
-import { Menu, Home, Compass, Gavel, Store, HelpCircle, Sun, Moon, LogOut, type LucideIcon } from 'lucide-react';
+import { Menu, Home, Compass, Gavel, Store, HelpCircle, Sun, Moon, LogOut, User, type LucideIcon } from 'lucide-react';
 import { useTheme } from './themeprovider'; // Adjust path to your ThemeProvider
 import { signOut } from '@/lib/auth';
 
@@ -34,6 +34,8 @@ export interface SidebarProps {
 
   /** Configuration for the bottom/end of the sidebar */
   showThemeToggle?: boolean;
+  showProfileButton?: boolean;
+  onProfileClick?: () => void;
   showHelpIcon?: boolean;
   helpIcon?: LucideIcon;
   onHelpClick?: () => void;
@@ -71,6 +73,8 @@ const DEFAULT_NAV_ITEMS: NavItem[] = [
 export const Sidebar: React.FC<SidebarProps> = ({
   navItems = DEFAULT_NAV_ITEMS,
   showThemeToggle = true,
+  showProfileButton = false,
+  onProfileClick,
   showHelpIcon = false,
   helpIcon: HelpIcon = HelpCircle,
   onHelpClick,
@@ -110,10 +114,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   } as React.CSSProperties;
 
   useEffect(() => {
-    const bottomActionsCount = (showThemeToggle ? 1 : 0) + 1 + (showHelpIcon ? 1 : 0);
+    const bottomActionsCount = (showThemeToggle ? 1 : 0) + (showProfileButton ? 1 : 0) + 1 + (showHelpIcon ? 1 : 0);
     iconRefs.current.length = navItems.length + bottomActionsCount;
     labelRefs.current.length = navItems.length + bottomActionsCount;
-  }, [navItems.length, showThemeToggle, showHelpIcon]);
+  }, [navItems.length, showThemeToggle, showProfileButton, showHelpIcon]);
 
   // GSAP Entrance Animations
   useLayoutEffect(() => {
@@ -303,10 +307,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Bottom Icons Container */}
       <div className="hidden md:flex flex-col gap-6 mt-auto items-center md:items-start w-full md:px-[25px]">
 
+        {/* Profile Button */}
+        {showProfileButton && (
+          <div
+            ref={(el) => { iconRefs.current[navItems.length + (showProfileButton ? 0 : 0)] = el; }}
+            onClick={onProfileClick}
+            title="Profile"
+            className="cursor-pointer p-2 rounded-xl hover:bg-[var(--sb-hover-light)] dark:hover:bg-[var(--sb-hover-dark)] transition-colors duration-300 flex items-center md:justify-start md:overflow-hidden md:w-full"
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
+          >
+            <User size={24} strokeWidth={2.25} className="shrink-0" />
+            <span
+              ref={(el) => { labelRefs.current[navItems.length + (showProfileButton ? 0 : 0)] = el; }}
+              className={`
+              hidden md:block whitespace-nowrap overflow-hidden opacity-0 max-w-0 ml-0
+            `}
+            >
+              Profile
+            </span>
+          </div>
+        )}
+
         {/* Theme Toggle Button */}
         {showThemeToggle && mounted && (
           <div
-            ref={(el) => { iconRefs.current[navItems.length] = el; }}
+            ref={(el) => { iconRefs.current[navItems.length + (showProfileButton ? 1 : 0)] = el; }}
             onClick={handleThemeToggle}
             title="Toggle Theme"
             className="cursor-pointer p-2 rounded-xl hover:bg-[var(--sb-hover-light)] dark:hover:bg-[var(--sb-hover-dark)] transition-colors duration-300 flex items-center md:justify-start md:overflow-hidden md:w-full"
@@ -325,7 +351,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               )}
             </div>
             <span
-              ref={(el) => { labelRefs.current[navItems.length] = el; }}
+              ref={(el) => { labelRefs.current[navItems.length + (showProfileButton ? 1 : 0)] = el; }}
               className={`
               hidden md:block whitespace-nowrap overflow-hidden opacity-0 max-w-0 ml-0
             `}
@@ -337,7 +363,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {/* Logout Button */}
         <div
-          ref={(el) => { iconRefs.current[navItems.length + (showThemeToggle ? 1 : 0)] = el; }}
+          ref={(el) => { iconRefs.current[navItems.length + (showProfileButton ? 1 : 0) + (showThemeToggle ? 1 : 0)] = el; }}
           onClick={handleLogout}
           title="Logout"
           className="cursor-pointer p-2 rounded-xl hover:bg-[var(--sb-hover-light)] dark:hover:bg-[var(--sb-hover-dark)] transition-colors duration-300 flex items-center md:justify-start md:overflow-hidden md:w-full"
@@ -346,7 +372,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         >
           <LogOut size={24} strokeWidth={2.25} className="shrink-0" />
           <span
-            ref={(el) => { labelRefs.current[navItems.length + (showThemeToggle ? 1 : 0)] = el; }}
+            ref={(el) => { labelRefs.current[navItems.length + (showProfileButton ? 1 : 0) + (showThemeToggle ? 1 : 0)] = el; }}
             className={`
               hidden md:block whitespace-nowrap overflow-hidden opacity-0 max-w-0 ml-0
             `}
@@ -358,7 +384,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Help Icon */}
         {showHelpIcon && (
           <div
-            ref={(el) => { iconRefs.current[navItems.length + (showThemeToggle ? 1 : 0) + 1] = el; }}
+            ref={(el) => { iconRefs.current[navItems.length + (showProfileButton ? 1 : 0) + (showThemeToggle ? 1 : 0) + 1] = el; }}
             onClick={onHelpClick}
             title="Help & Support"
             className="cursor-pointer p-2 rounded-xl hover:bg-[var(--sb-hover-light)] dark:hover:bg-[var(--sb-hover-dark)] transition-colors duration-300 flex items-center md:justify-start md:overflow-hidden md:w-full"
@@ -367,7 +393,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           >
             <HelpIcon size={24} strokeWidth={2.25} className="shrink-0" />
             <span
-              ref={(el) => { labelRefs.current[navItems.length + (showThemeToggle ? 1 : 0) + 1] = el; }}
+              ref={(el) => { labelRefs.current[navItems.length + (showProfileButton ? 1 : 0) + (showThemeToggle ? 1 : 0) + 1] = el; }}
               className={`
               hidden md:block whitespace-nowrap overflow-hidden opacity-0 max-w-0 ml-0
             `}

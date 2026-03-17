@@ -39,11 +39,25 @@ def run_agent1(state: GraphState):
     pydantic_state = CaseState(**case_dict)
     updated_case = intake_agent(pydantic_state)
     
-    # If force_complete is set, override Agent 1's decision and proceed
+    # If force_complete is set, only proceed if we actually have some substance
     if force_complete:
-        logger.info("--- FORCE COMPLETE: Overriding intake status to 'complete' ---")
-        updated_case.intake_status = "complete"
-        updated_case.follow_up_questions = []  # Clear any leftover questions
+        # Check if we have an incident type and a non-trivial narrative
+        has_facts = (updated_case.structured_facts and 
+                     updated_case.structured_facts.incident_type and 
+                     updated_case.structured_facts.incident_summary != "No summary provided.")
+        
+        narrative_long_enough = len(updated_case.raw_narrative.strip()) > 40
+
+        if has_facts and narrative_long_enough:
+            logger.info("--- FORCE COMPLETE: Minimum facts gathered, proceeding to analysis ---")
+            updated_case.intake_status = "complete"
+            updated_case.follow_up_questions = []  # Clear questions
+        else:
+            logger.info("--- FORCE COMPLETE: Insufficient info, staying in intake despite round limit ---")
+            updated_case.intake_status = "awaiting_user_response"
+            # If no questions were generated but we're stuck, add a generic one
+            if not updated_case.follow_up_questions:
+                updated_case.follow_up_questions = ["Could you please provide more details about the incident?"]
     
     # Store everything as a flat dict moving between nodes
     status = "complete" if updated_case.intake_status == "complete" else "awaiting_user_response"

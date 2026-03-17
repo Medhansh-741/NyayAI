@@ -1,5 +1,6 @@
 'use client';
 import React, { useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { Sidebar } from '../../../../components/sidebar';
 import type { NavItem } from '../../../../components/sidebar';
 import gsap from 'gsap';
@@ -19,6 +20,12 @@ export default function LawyerHome() {
   const chatBubbleRef = useRef<HTMLDivElement>(null);
   const inputBarRef = useRef<HTMLDivElement>(null);
   const iconsRef = useRef<HTMLDivElement>(null);
+
+  const router = useRouter();
+
+  const handleProfileClick = () => {
+    router.push('/lawyerside/profile');
+  };
 
   useEffect(() => {
     const ctx = gsap.context(() => {
@@ -59,7 +66,7 @@ export default function LawyerHome() {
     <div className="flex h-screen bg-gray-50 dark:bg-[#0f1e3f] overflow-hidden" ref={containerRef}>
       {/* Sidebar */}
       <div className="shrink-0 h-screen z-50 md:sticky md:top-0 shadow-[4px_0_24px_rgba(0,0,0,0.05)] dark:shadow-none bg-white dark:bg-[#0a152e]">
-        <Sidebar navItems={LAWYER_NAV_ITEMS} />
+        <Sidebar navItems={LAWYER_NAV_ITEMS} showProfileButton={true} onProfileClick={handleProfileClick} />
       </div>
 
       {/* Main Content Area */}
