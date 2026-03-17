@@ -9,7 +9,7 @@ import { LiquidSlider } from '../../../../components/LiquidSlider';
 import { supabase } from '@/lib/supabase/client';
 import type { Database } from '@/types/supabase';
 import { Menu, Home, Compass, Store, Gavel } from 'lucide-react';
-import { acceptAvailableCase, acceptOffer } from '@/lib/db/pipeline';
+import { acceptAvailableCase } from '@/lib/db/pipeline';
 import * as Dialog from '@radix-ui/react-dialog';
 
 type CaseRow = Database['public']['Tables']['cases']['Row'];
@@ -28,6 +28,24 @@ type BriefDispatchRow = {
   documents: unknown | null
   status: string
   created_at: string | null
+}
+
+type BriefDispatchClient = {
+  from: (table: 'brief_dispatches') => {
+    select: (columns: string) => {
+      eq: (column: string, value: string) => {
+        in: (column: string, value: string[]) => {
+          order: (column: string, options: { ascending: boolean }) => Promise<{ data: BriefDispatchRow[] | null; error: { message: string } | null }>
+        }
+        eq: (column: string, value: string) => {
+          order: (column: string, options: { ascending: boolean }) => Promise<{ data: BriefDispatchRow[] | null; error: { message: string } | null }>
+        }
+      }
+    }
+    update: (values: { status: string }) => {
+      eq: (column: string, value: string) => Promise<{ data: unknown; error: { message: string } | null }>
+    }
+  }
 }
 
 type CasePreview = Pick<
@@ -56,6 +74,8 @@ interface OfferedCase {
 interface IncomingDispatch {
   dispatch: BriefDispatchRow;
   caseData: CasePreview;
+  offerStage: PipelineRow['stage'] | null;
+  offerSentAt: string | null;
 }
 
 function formatStage(stage: string | null): string {
@@ -165,6 +185,7 @@ function parseBudget(str: string): number {
 
 export default function LawyerCaseMarketplace() {
   const router = useRouter()
+  const briefDispatchClient = supabase as unknown as BriefDispatchClient
   const [lawyerProfile, setLawyerProfile] = useState<LawyerProfilePreview | null>(null)
   const [allCases, setAllCases]             = useState<CasePreview[]>([])
   const [incomingDispatches, setIncomingDispatches] = useState<IncomingDispatch[]>([])
@@ -174,45 +195,114 @@ export default function LawyerCaseMarketplace() {
   const [offeredError, setOfferedError]     = useState<string | null>(null)
   const [hoveredCard, setHoveredCard]       = useState<string | null>(null)
   const [activeTab, setActiveTab]           = useState<'left' | 'right'>('left')
-  const [acceptingPipelineId, setAcceptingPipelineId] = useState<string | null>(null)
   const [acceptingCaseId, setAcceptingCaseId] = useState<string | null>(null)
   const [now, setNow] = useState<number>(0)
   const [selectedAvailable, setSelectedAvailable] = useState<CasePreview | null>(null)
   const [selectedDispatch, setSelectedDispatch] = useState<IncomingDispatch | null>(null)
+  const [offerAmountInput, setOfferAmountInput] = useState<string>('25000')
+  const [offerMessageInput, setOfferMessageInput] = useState<string>('Scope, timeline, engagement type, and next steps...')
+  const [sendingOffer, setSendingOffer] = useState(false)
+  const [currentLawyerId, setCurrentLawyerId] = useState<string | null>(null)
+  const [hiddenAvailableCaseIds, setHiddenAvailableCaseIds] = useState<Set<string>>(new Set())
+  const [hiddenIncomingDispatchIds, setHiddenIncomingDispatchIds] = useState<Set<string>>(new Set())
+  const [dismissingCaseId, setDismissingCaseId] = useState<string | null>(null)
 
   const handleProfileClick = () => {
     router.push('/lawyerside/profile')
   }
 
-  const handleAcceptOffer = useCallback(async (pipelineId: string, caseId: string) => {
-    setAcceptingPipelineId(pipelineId)
-    const { error } = await acceptOffer(pipelineId, caseId)
-    setAcceptingPipelineId(null)
-    if (error) {
-      setOfferedError(error.message)
+  const getHiddenAvailableKey = (lawyerId: string) => `hidden_available_cases:${lawyerId}`
+  const getHiddenIncomingKey = (lawyerId: string) => `hidden_incoming_dispatches:${lawyerId}`
+
+  const loadHiddenState = useCallback((lawyerId: string) => {
+    try {
+      const availableRaw = localStorage.getItem(getHiddenAvailableKey(lawyerId))
+      const incomingRaw = localStorage.getItem(getHiddenIncomingKey(lawyerId))
+      const available = availableRaw ? (JSON.parse(availableRaw) as string[]) : []
+      const incoming = incomingRaw ? (JSON.parse(incomingRaw) as string[]) : []
+      setHiddenAvailableCaseIds(new Set(available))
+      setHiddenIncomingDispatchIds(new Set(incoming))
+    } catch {
+      setHiddenAvailableCaseIds(new Set())
+      setHiddenIncomingDispatchIds(new Set())
+    }
+  }, [])
+
+  const persistHiddenAvailable = useCallback((lawyerId: string, next: Set<string>) => {
+    localStorage.setItem(getHiddenAvailableKey(lawyerId), JSON.stringify(Array.from(next)))
+  }, [])
+
+  const persistHiddenIncoming = useCallback((lawyerId: string, next: Set<string>) => {
+    localStorage.setItem(getHiddenIncomingKey(lawyerId), JSON.stringify(Array.from(next)))
+  }, [])
+
+  const handleDismissAvailableCase = useCallback((caseId: string) => {
+    if (!currentLawyerId) return
+    setHiddenAvailableCaseIds((prev) => {
+      const next = new Set(prev)
+      next.add(caseId)
+      persistHiddenAvailable(currentLawyerId, next)
+      return next
+    })
+  }, [currentLawyerId, persistHiddenAvailable])
+
+  const handleDismissIncomingRequest = useCallback(async (incoming: IncomingDispatch) => {
+    const { data: authData, error: authError } = await supabase.auth.getUser()
+    if (authError || !authData.user) {
+      setOfferedError('Not authenticated. Please log in.')
       return
     }
 
-    // Instant UI feedback handled by caller
+    setDismissingCaseId(incoming.dispatch.id)
 
-    router.push('/lawyerside/my-cases')
-  }, [router])
+    // Archive incoming request for lawyer view
+    const { error: archiveErr } = await briefDispatchClient
+      .from('brief_dispatches')
+      .update({ status: 'archived' })
+      .eq('id', incoming.dispatch.id)
 
-  const handleSendOfferFromDispatch = useCallback(async (incoming: IncomingDispatch) => {
-    const offerAmountRaw = typeof window !== 'undefined'
-      ? window.prompt('Enter your offer amount (INR):', '25000')
-      : null
-    if (!offerAmountRaw) return
+    if (archiveErr) {
+      setOfferedError(archiveErr.message)
+      setDismissingCaseId(null)
+      return
+    }
+
+    // If an offer was already sent, withdraw it so this request is fully removed from lawyer side.
+    if (incoming.offerStage === 'offered') {
+      await supabase
+        .from('case_pipeline')
+        .update({ stage: 'withdrawn' })
+        .eq('case_id', incoming.caseData.id)
+        .eq('lawyer_id', authData.user.id)
+        .eq('stage', 'offered')
+    }
+
+    if (currentLawyerId) {
+      setHiddenIncomingDispatchIds((prev) => {
+        const next = new Set(prev)
+        next.add(incoming.dispatch.id)
+        persistHiddenIncoming(currentLawyerId, next)
+        return next
+      })
+    }
+
+    setIncomingDispatches((prev) => prev.filter((d) => d.dispatch.id !== incoming.dispatch.id))
+    if (selectedDispatch?.dispatch.id === incoming.dispatch.id) {
+      setSelectedDispatch(null)
+    }
+    setDismissingCaseId(null)
+  }, [briefDispatchClient, currentLawyerId, persistHiddenIncoming, selectedDispatch])
+
+  const handleSendOfferFromDispatch = useCallback(async (incoming: IncomingDispatch, offerAmountRaw: string, offerMessage: string) => {
     const offerAmount = Number(offerAmountRaw)
     if (!Number.isFinite(offerAmount) || offerAmount <= 0) {
       setOfferedError('Invalid offer amount.')
       return
     }
-
-    const offerMessage = typeof window !== 'undefined'
-      ? window.prompt('Message to citizen (offer details):', 'Scope, timeline, engagement type, and next steps...')
-      : null
-    if (!offerMessage) return
+    if (!offerMessage || offerMessage.trim().length < 10) {
+      setOfferedError('Please add a clear offer message (at least 10 characters).')
+      return
+    }
 
     const { data: authData, error: authError } = await supabase.auth.getUser()
     if (authError || !authData.user) {
@@ -220,30 +310,82 @@ export default function LawyerCaseMarketplace() {
       return
     }
 
-    const { error: offerErr } = await supabase
-      .from('case_pipeline')
-      .insert({
-        case_id: incoming.caseData.id,
-        lawyer_id: authData.user.id,
-        stage: 'offered',
-        offer_amount: offerAmount,
-        offer_message: offerMessage,
-        offer_note: incoming.dispatch.intro_message,
-        offer_sent_at: new Date().toISOString(),
-      })
+    setSendingOffer(true)
 
-    if (offerErr) {
-      setOfferedError(offerErr.message)
+    const { data: existingRows, error: existingErr } = await supabase
+      .from('case_pipeline')
+      .select('id, stage')
+      .eq('case_id', incoming.caseData.id)
+      .eq('lawyer_id', authData.user.id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+
+    if (existingErr) {
+      setOfferedError(existingErr.message)
+      setSendingOffer(false)
       return
     }
 
-    await (supabase as any)
+    const existing = existingRows?.[0] ?? null
+
+    if (existing?.stage && ['accepted', 'active', 'completed'].includes(existing.stage)) {
+      setOfferedError('This case is already accepted and moved to My Cases.')
+      setSendingOffer(false)
+      return
+    }
+
+    const offerPayload = {
+      offer_amount: offerAmount,
+      offer_message: offerMessage.trim(),
+      offer_note: incoming.dispatch.intro_message,
+      offer_sent_at: new Date().toISOString(),
+    }
+
+    let offerErr: { message: string } | null = null
+
+    if (existing?.stage === 'offered') {
+      const { error } = await supabase
+        .from('case_pipeline')
+        .update(offerPayload)
+        .eq('id', existing.id)
+      offerErr = error
+    } else {
+      const { error } = await supabase
+        .from('case_pipeline')
+        .insert({
+          case_id: incoming.caseData.id,
+          lawyer_id: authData.user.id,
+          stage: 'offered',
+          ...offerPayload,
+        })
+      offerErr = error
+    }
+
+    if (offerErr) {
+      setOfferedError(offerErr.message)
+      setSendingOffer(false)
+      return
+    }
+
+    await briefDispatchClient
       .from('brief_dispatches')
-      .update({ status: 'archived' })
+      .update({ status: 'offered' })
       .eq('id', incoming.dispatch.id)
 
-    setIncomingDispatches((prev) => prev.filter((d) => d.dispatch.id !== incoming.dispatch.id))
+    setIncomingDispatches((prev) =>
+      prev.map((d) =>
+        d.dispatch.id === incoming.dispatch.id
+          ? {
+              ...d,
+              dispatch: { ...d.dispatch, status: 'offered' },
+              offerStage: 'offered',
+              offerSentAt: new Date().toISOString(),
+            }
+          : d
+      )
+    )
     setSelectedDispatch(null)
+    setSendingOffer(false)
   }, [])
 
   const handleAcceptAvailable = useCallback(async (caseId: string) => {
@@ -315,6 +457,9 @@ export default function LawyerCaseMarketplace() {
         return
       }
 
+      setCurrentLawyerId(user.id)
+      loadHiddenState(user.id)
+
       // 2. Get lawyer profile for specialisations
       const { data: profile, error: profileError } = await supabase
         .from('lawyer_profiles')
@@ -364,11 +509,11 @@ export default function LawyerCaseMarketplace() {
       setIsLoading(false)
 
       // 5. Fetch incoming brief dispatches (Inbox tab)
-      const { data: dispatchRows, error: dispatchErr } = await (supabase as any)
+      const { data: dispatchRows, error: dispatchErr } = await briefDispatchClient
         .from('brief_dispatches')
         .select('id, case_id, citizen_id, lawyer_id, intro_message, ai_brief, citizen_inputs, documents, status, created_at')
         .eq('lawyer_id', user.id)
-        .eq('status', 'sent')
+        .in('status', ['sent', 'offered'])
         .order('created_at', { ascending: false })
 
       if (dispatchErr) {
@@ -396,9 +541,33 @@ export default function LawyerCaseMarketplace() {
       }
 
       const caseMap = new Map((caseRows ?? []).map((c) => [c.id, c]))
+
+      const { data: pipelineForIncoming } = await supabase
+        .from('case_pipeline')
+        .select('case_id, stage, offer_sent_at, created_at')
+        .eq('lawyer_id', user.id)
+        .in('case_id', caseIds)
+        .order('created_at', { ascending: false })
+
+      const latestPipelineByCase = new Map<string, { stage: PipelineRow['stage'] | null; offer_sent_at: string | null }>()
+      ;(pipelineForIncoming ?? []).forEach((row) => {
+        if (!latestPipelineByCase.has(row.case_id)) {
+          latestPipelineByCase.set(row.case_id, { stage: row.stage, offer_sent_at: row.offer_sent_at })
+        }
+      })
+
       const merged: IncomingDispatch[] = (dispatchRows as BriefDispatchRow[])
         .filter((d) => caseMap.has(d.case_id))
-        .map((d) => ({ dispatch: d, caseData: caseMap.get(d.case_id)! }))
+        .map((d) => {
+          const latest = latestPipelineByCase.get(d.case_id)
+          return {
+            dispatch: d,
+            caseData: caseMap.get(d.case_id)!,
+            offerStage: latest?.stage ?? null,
+            offerSentAt: latest?.offer_sent_at ?? null,
+          }
+        })
+        .filter((entry) => !['accepted', 'active', 'completed'].includes(entry.offerStage ?? ''))
 
       setIncomingDispatches(merged)
     } catch (err) {
@@ -409,7 +578,7 @@ export default function LawyerCaseMarketplace() {
 
     setIsLoading(false)
     setOfferedLoading(false)
-  }, [])
+  }, [loadHiddenState])
 
   useEffect(() => {
     fetchData()
@@ -456,6 +625,8 @@ export default function LawyerCaseMarketplace() {
   const filteredCases = useMemo(() => {
     let result = [...allCases]
 
+    result = result.filter((c) => !hiddenAvailableCaseIds.has(c.id))
+
     if (selectedDomain !== 'Legal Domain') {
       result = result.filter(c => c.domain === selectedDomain)
     }
@@ -473,11 +644,13 @@ export default function LawyerCaseMarketplace() {
     result = result.filter(c => !c.budget_min || c.budget_min <= maxB)
 
     return result
-  }, [allCases, selectedDomain, selectedRecency, selectedBudgetIndex, recencyOptions])
+  }, [allCases, selectedDomain, selectedRecency, selectedBudgetIndex, recencyOptions, hiddenAvailableCaseIds])
 
   // ── Filtered results (Incoming Requests) ───────────────
   const filteredDispatches = useMemo(() => {
     let result = [...incomingDispatches]
+
+    result = result.filter((o) => !hiddenIncomingDispatchIds.has(o.dispatch.id))
 
     if (selectedDomain !== 'Legal Domain') {
       result = result.filter(o => o.caseData.domain === selectedDomain)
@@ -495,8 +668,12 @@ export default function LawyerCaseMarketplace() {
     const maxB  = parseBudget(allBudgetLabels[idx] ?? '₹5L+')
     result = result.filter(o => !o.caseData.budget_min || o.caseData.budget_min <= maxB)
 
-    return result
-  }, [incomingDispatches, selectedDomain, selectedRecency, selectedBudgetIndex, recencyOptions, now])
+    return result.sort((a, b) => {
+      const aTs = a.dispatch.created_at ? new Date(a.dispatch.created_at).getTime() : 0
+      const bTs = b.dispatch.created_at ? new Date(b.dispatch.created_at).getTime() : 0
+      return bTs - aTs
+    })
+  }, [incomingDispatches, selectedDomain, selectedRecency, selectedBudgetIndex, recencyOptions, now, hiddenIncomingDispatchIds])
 
   // ── Click outside ──────────────────────────────────────
   useEffect(() => {
@@ -589,7 +766,7 @@ export default function LawyerCaseMarketplace() {
           <div className="shrink-0 flex items-center justify-end transform scale-[0.7] origin-top-right md:pt-1">
             <LiquidSlider
               leftLabel="Available"
-              rightLabel="Offered"
+              rightLabel="Incoming"
               value={activeTab}
               onChange={setActiveTab}
             />
@@ -753,6 +930,17 @@ export default function LawyerCaseMarketplace() {
                     onMouseLeave={() => setHoveredCard(null)}
                     className={`block bg-white dark:bg-[#cdaa80] text-[#0f1e3f] rounded-xl p-6 md:p-8 transition-all duration-300 ease-out cursor-pointer relative overflow-hidden shadow-lg border border-gray-100 dark:border-transparent ${hoveredCard === caseItem.id ? 'transform -translate-y-1 shadow-2xl brightness-105' : ''}`}
                   >
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleDismissAvailableCase(caseItem.id)
+                      }}
+                      className="absolute top-3 right-3 z-20 w-7 h-7 rounded-full border border-[#0f1e3f]/20 bg-white/90 text-[#0f1e3f]/70 hover:bg-[#0f1e3f] hover:text-[#cdaa80] transition-colors"
+                      title="Remove from marketplace"
+                    >
+                      ×
+                    </button>
                     <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'radial-gradient(#0f1e3f 1px, transparent 1px)', backgroundSize: '20px 20px' }} />
 
                     <div className="flex flex-col md:flex-row justify-between gap-6 relative z-10">
@@ -890,6 +1078,9 @@ export default function LawyerCaseMarketplace() {
                 const confidence = caseData.confidence_score
                   ? `${(caseData.confidence_score * 100).toFixed(0)}%`
                   : null
+                const incoming = incomingDispatches.find((entry) => entry.dispatch.id === dispatch.id)
+                const isOfferSent = incoming?.offerStage === 'offered'
+                const offerWaitingText = incoming?.offerSentAt ? `Offer sent ${timeAgo(incoming.offerSentAt)} • Waiting for citizen acceptance` : 'Offer sent • Waiting for citizen acceptance'
 
                 return (
                   <div
@@ -898,6 +1089,18 @@ export default function LawyerCaseMarketplace() {
                     onMouseLeave={() => setHoveredCard(null)}
                     className={`block bg-white dark:bg-[#cdaa80] text-[#0f1e3f] rounded-xl p-6 md:p-8 transition-all duration-300 ease-out cursor-pointer relative overflow-hidden shadow-lg border border-gray-100 dark:border-transparent ${hoveredCard === dispatch.id ? 'transform -translate-y-1 shadow-2xl brightness-105' : ''}`}
                   >
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        void handleDismissIncomingRequest({ dispatch, caseData, offerStage: incoming?.offerStage ?? null, offerSentAt: incoming?.offerSentAt ?? null })
+                      }}
+                      disabled={dismissingCaseId === dispatch.id}
+                      className="absolute top-3 right-3 z-20 w-7 h-7 rounded-full border border-[#0f1e3f]/20 bg-white/90 text-[#0f1e3f]/70 hover:bg-[#0f1e3f] hover:text-[#cdaa80] transition-colors disabled:opacity-60"
+                      title="Remove from incoming"
+                    >
+                      {dismissingCaseId === dispatch.id ? '…' : '×'}
+                    </button>
                     <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'radial-gradient(#0f1e3f 1px, transparent 1px)', backgroundSize: '20px 20px' }} />
 
                     <div className="flex flex-col md:flex-row justify-between gap-6 relative z-10">
@@ -909,7 +1112,7 @@ export default function LawyerCaseMarketplace() {
                               {formatDomain(caseData.domain)}
                             </span>
                             <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wider font-sans uppercase bg-amber-500/20 text-amber-700">
-                              Incoming
+                              {isOfferSent ? 'Offer Sent' : 'Incoming'}
                             </span>
                           </div>
                           <div className="md:hidden text-right font-sans">
@@ -947,7 +1150,7 @@ export default function LawyerCaseMarketplace() {
                               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                               </svg>
-                              Offered {offerDate}
+                              {isOfferSent ? offerWaitingText : `Incoming ${offerDate}`}
                             </div>
                           </div>
                           <div className="flex gap-2 flex-wrap">
@@ -960,10 +1163,16 @@ export default function LawyerCaseMarketplace() {
                             </button>
                             <button
                               type="button"
-                              onClick={(e) => { e.stopPropagation(); void handleSendOfferFromDispatch({ dispatch, caseData }) }}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setOfferAmountInput('25000')
+                                setOfferMessageInput('Scope, timeline, engagement type, and next steps...')
+                                setSelectedDispatch({ dispatch, caseData })
+                              }}
+                              disabled={isOfferSent}
                               className={`md:hidden px-5 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 text-center mt-2 w-full max-w-[180px] ${hoveredCard === dispatch.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'} disabled:opacity-60`}
                             >
-                              Send offer
+                              {isOfferSent ? 'Waiting acceptance' : 'Send offer'}
                             </button>
                           </div>
                         </div>
@@ -988,10 +1197,16 @@ export default function LawyerCaseMarketplace() {
                           </button>
                           <button
                             type="button"
-                            onClick={(e) => { e.stopPropagation(); void handleSendOfferFromDispatch({ dispatch, caseData }) }}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setOfferAmountInput('25000')
+                              setOfferMessageInput('Scope, timeline, engagement type, and next steps...')
+                              setSelectedDispatch({ dispatch, caseData })
+                            }}
+                            disabled={isOfferSent}
                             className={`px-6 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 mt-4 text-center ${hoveredCard === dispatch.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'} disabled:opacity-60`}
                           >
-                            Send offer
+                            {isOfferSent ? 'Waiting acceptance' : 'Send offer'}
                           </button>
                         </div>
                       </div>
@@ -1136,11 +1351,40 @@ export default function LawyerCaseMarketplace() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => { void handleSendOfferFromDispatch(selectedDispatch) }}
-                      className="px-4 py-2 rounded-lg text-sm font-sans border border-[#0f1e3f]/30 bg-[#0f1e3f] text-[#cdaa80] hover:bg-[#0f1e3f]/90"
+                      onClick={() => { void handleSendOfferFromDispatch(selectedDispatch, offerAmountInput, offerMessageInput) }}
+                      disabled={sendingOffer || selectedDispatch.offerStage === 'offered'}
+                      className="px-4 py-2 rounded-lg text-sm font-sans border border-[#0f1e3f]/30 bg-[#0f1e3f] text-[#cdaa80] hover:bg-[#0f1e3f]/90 disabled:opacity-60"
                     >
-                      Send offer
+                      {sendingOffer ? 'Sending…' : selectedDispatch.offerStage === 'offered' ? 'Waiting for acceptance' : 'Send offer'}
                     </button>
+                  </div>
+
+                  <div className="rounded-xl border border-[#e7d9c7] dark:border-[#cdaa80]/20 p-3 space-y-3">
+                    <div>
+                      <label className="text-[11px] uppercase tracking-wide font-bold text-[#997953] dark:text-[#cdaa80]">
+                        Offer amount (INR)
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={offerAmountInput}
+                        onChange={(e) => setOfferAmountInput(e.target.value)}
+                        className="mt-1 w-full rounded-lg border border-[#0f1e3f]/20 bg-[#fdf9f3] dark:bg-[#12284f]/70 px-3 py-2 text-sm font-sans text-[#0f1e3f] dark:text-white/85 outline-none focus:ring-2 focus:ring-[#cdaa80]/40"
+                        placeholder="25000"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] uppercase tracking-wide font-bold text-[#997953] dark:text-[#cdaa80]">
+                        Offer message
+                      </label>
+                      <textarea
+                        rows={4}
+                        value={offerMessageInput}
+                        onChange={(e) => setOfferMessageInput(e.target.value)}
+                        className="mt-1 w-full rounded-lg border border-[#0f1e3f]/20 bg-[#fdf9f3] dark:bg-[#12284f]/70 px-3 py-2 text-sm font-sans text-[#0f1e3f] dark:text-white/85 outline-none focus:ring-2 focus:ring-[#cdaa80]/40"
+                        placeholder="Scope, timeline, engagement type, and next steps..."
+                      />
+                    </div>
                   </div>
                 </div>
               )}

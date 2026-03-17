@@ -8,6 +8,8 @@ import axios from 'axios';
 import { supabase } from '@/lib/supabase/client';
 import { upsertChatbotCase } from '@/lib/db/cases';
 import { setActiveCaseForUser } from '@/lib/db/sessions';
+import { getNotifications, markAllNotificationsRead, markNotificationRead, subscribeToNotifications } from '@/lib/db/notifications';
+import type { Database } from '@/types/supabase';
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001').replace(/\/$/, '')
 
@@ -44,12 +46,52 @@ export default function CitizenHome() {
   const [isLoading, setIsLoading] = useState(false);
   const [caseId, setCaseId] = useState<string | null>(null);
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
+  const [notificationOpen, setNotificationOpen] = useState(false);
+  const [notificationLoading, setNotificationLoading] = useState(false);
+  const [notifications, setNotifications] = useState<NotificationRow[]>([]);
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
   
   const containerRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputBarRef = useRef<HTMLDivElement>(null);
   const iconsRef = useRef<HTMLDivElement>(null);
+  const notificationRef = useRef<HTMLDivElement>(null);
+
+  const onlyLawyerAcceptance = (rows: NotificationRow[]) =>
+    rows.filter((row) => {
+      if (row.type === 'offer_accepted') return true;
+      const title = (row.title ?? '').toLowerCase();
+      const body = (row.body ?? '').toLowerCase();
+      return title.includes('accepted') || body.includes('accepted');
+    });
+
+  const formatRelativeTime = (iso: string | null) => {
+    if (!iso) return 'Just now';
+    const then = new Date(iso).getTime();
+    const now = Date.now();
+    const diffMin = Math.floor((now - then) / 60000);
+    if (diffMin < 1) return 'Just now';
+    if (diffMin < 60) return `${diffMin}m ago`;
+    const diffHr = Math.floor(diffMin / 60);
+    if (diffHr < 24) return `${diffHr}h ago`;
+    const diffDay = Math.floor(diffHr / 24);
+    return `${diffDay}d ago`;
+  };
+
+  const loadAcceptanceNotifications = async () => {
+    const { data: authData, error: authError } = await supabase.auth.getUser();
+    if (authError || !authData.user) return;
+
+    setNotificationLoading(true);
+    const { data, error } = await getNotifications(authData.user.id, 30);
+    setNotificationLoading(false);
+    if (error) return;
+
+    const filtered = onlyLawyerAcceptance(data ?? []);
+    setNotifications(filtered);
+    setUnreadNotificationCount(filtered.filter((row) => !row.is_read).length);
+  };
   useEffect(() => {
     // Scroll to bottom whenever messages change or loading state changes
     scrollToBottom();
@@ -81,6 +123,45 @@ export default function CitizenHome() {
     }, containerRef);
     
     return () => ctx.revert();
+  }, []);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (!notificationRef.current?.contains(target)) {
+        setNotificationOpen(false);
+      }
+    };
+
+    if (notificationOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [notificationOpen]);
+
+  useEffect(() => {
+    let channel: ReturnType<typeof subscribeToNotifications> | null = null;
+
+    const init = async () => {
+      await loadAcceptanceNotifications();
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+      if (authError || !authData.user) return;
+
+      channel = subscribeToNotifications(authData.user.id, async () => {
+        await loadAcceptanceNotifications();
+      });
+    };
+
+    void init();
+
+    return () => {
+      if (channel) {
+        channel.unsubscribe();
+      }
+    };
   }, []);
 
   const scrollToBottom = () => {
@@ -219,6 +300,22 @@ export default function CitizenHome() {
     }
   };
 
+  const handleMarkAllRead = async () => {
+    const { data: authData, error: authError } = await supabase.auth.getUser();
+    if (authError || !authData.user) return;
+    await markAllNotificationsRead(authData.user.id);
+    setNotifications((prev) => prev.map((row) => ({ ...row, is_read: true })));
+    setUnreadNotificationCount(0);
+  };
+
+  const handleMarkRead = async (notificationId: string) => {
+    await markNotificationRead(notificationId);
+    setNotifications((prev) =>
+      prev.map((row) => (row.id === notificationId ? { ...row, is_read: true } : row))
+    );
+    setUnreadNotificationCount((prev) => Math.max(prev - 1, 0));
+  };
+
   return (
     <div className="flex h-screen bg-gray-50 dark:bg-[#0f1e3f] overflow-hidden" ref={containerRef}>
       {/* Sidebar */}
@@ -230,33 +327,85 @@ export default function CitizenHome() {
       <div className="flex-1 flex flex-col relative h-full w-full">
         {/* Top Right Icons */}
         <div ref={iconsRef} className="absolute top-6 right-6 md:top-8 md:right-8 flex items-center gap-4 z-10 cursor-pointer">
-          <button className="flex items-center justify-center w-11 h-11 md:w-12 md:h-12 rounded-full border border-gray-300 dark:border-white/5 dark:bg-[#213a56]/20 bg-white text-gray-700 dark:text-[#cdaa80] hover:bg-gray-100 dark:hover:bg-[#213a56]/60 transition-all duration-300 hover:scale-105 active:scale-95 shadow-sm">
-            <svg className="w-5 h-5 md:w-5 md:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
-            </svg>
-          </button>
-          <button 
-            onClick={() => {
-              setMessages([{
-                id: 'welcome',
-                role: 'ai',
-                type: 'text',
-                content: "Namaste! 👋 I'm NyayaAI. Describe your legal situation, and I will analyze the applicable laws and suggest next steps. You can also upload documents or evidence!",
-                timestamp: new Date()
-              }]);
-              setCaseId(null);
-            }}
-            title="Start New Case"
-            className="flex items-center justify-center w-11 h-11 md:w-12 md:h-12 rounded-full border border-gray-300 dark:border-white/5 dark:bg-[#213a56]/20 bg-white text-gray-700 dark:text-[#cdaa80] hover:bg-gray-100 dark:hover:bg-[#213a56]/60 transition-all duration-300 hover:scale-105 active:scale-95 shadow-sm">
-            <svg className="w-5 h-5 md:w-5 md:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-          </button>
-          <button title="Notifications" className="flex items-center justify-center w-11 h-11 md:w-12 md:h-12 rounded-full border border-gray-300 dark:border-white/5 dark:bg-[#213a56]/20 bg-white text-gray-700 dark:text-[#cdaa80] hover:bg-gray-100 dark:hover:bg-[#213a56]/60 transition-all duration-300 hover:scale-105 active:scale-95 shadow-sm">
-            <svg className="w-5 h-5 md:w-5 md:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-            </svg>
-          </button>
+          <div ref={notificationRef} className="relative">
+            <button
+              title="Notifications"
+              onClick={async () => {
+                const next = !notificationOpen;
+                setNotificationOpen(next);
+                if (next) {
+                  await loadAcceptanceNotifications();
+                }
+              }}
+              className="relative flex items-center justify-center w-11 h-11 md:w-12 md:h-12 rounded-full border border-gray-300 dark:border-white/5 dark:bg-[#213a56]/20 bg-white text-gray-700 dark:text-[#cdaa80] hover:bg-gray-100 dark:hover:bg-[#213a56]/60 transition-all duration-300 hover:scale-105 active:scale-95 shadow-sm"
+            >
+              <svg className="w-5 h-5 md:w-5 md:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+              </svg>
+              {unreadNotificationCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[20px] h-5 px-1 rounded-full bg-[#b0372f] text-white text-[10px] font-bold flex items-center justify-center">
+                  {unreadNotificationCount > 99 ? '99+' : unreadNotificationCount}
+                </span>
+              )}
+            </button>
+
+            {notificationOpen && (
+              <div className="absolute right-0 mt-3 w-[320px] md:w-[360px] rounded-2xl border border-[#d8c1a1]/60 dark:border-[#cdaa80]/20 bg-white/95 dark:bg-[#12284f]/95 backdrop-blur-md shadow-2xl overflow-hidden">
+                <div className="px-4 py-3 border-b border-[#e8d7c1] dark:border-[#cdaa80]/20 flex items-center justify-between">
+                  <div>
+                    <p className="text-[12px] uppercase tracking-[1.5px] text-[#7b5f40] dark:text-[#cdaa80] font-semibold">Notifications</p>
+                    <p className="text-[12px] text-[#6b5a49] dark:text-white/70">Lawyer acceptance updates</p>
+                  </div>
+                  <button
+                    onClick={handleMarkAllRead}
+                    className="text-[11px] font-semibold text-[#997953] dark:text-[#e0c3a0] hover:underline"
+                  >
+                    Mark all read
+                  </button>
+                </div>
+
+                <div className="max-h-[340px] overflow-y-auto custom-scrollbar">
+                  {notificationLoading ? (
+                    <div className="px-4 py-5 text-sm text-[#6b5a49] dark:text-white/70">Loading notifications...</div>
+                  ) : notifications.length === 0 ? (
+                    <div className="px-4 py-5 text-sm text-[#6b5a49] dark:text-white/70">No lawyer acceptance notifications yet.</div>
+                  ) : (
+                    notifications.map((item) => (
+                      <NextLink
+                        key={item.id}
+                        href="/citizen/cases"
+                        onClick={() => {
+                          void handleMarkRead(item.id);
+                          setNotificationOpen(false);
+                        }}
+                        className={`block px-4 py-3 border-b border-[#efe1ce] dark:border-[#cdaa80]/10 hover:bg-[#f9f2e8] dark:hover:bg-[#1a3358] transition-colors ${
+                          item.is_read ? 'opacity-80' : ''
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <p className="text-[13px] font-semibold text-[#3f3124] dark:text-white/90 leading-snug">
+                            {item.title || 'A lawyer accepted your request'}
+                          </p>
+                          <span className="text-[11px] text-[#7b5f40] dark:text-white/60 whitespace-nowrap">
+                            {formatRelativeTime(item.created_at)}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-[12px] text-[#6b5a49] dark:text-white/75 leading-relaxed">
+                          {item.body || 'Tap to open your case updates.'}
+                        </p>
+                      </NextLink>
+                    ))
+                  )}
+                </div>
+
+                <div className="px-4 py-2 bg-[#f8efe2] dark:bg-[#10264a] border-t border-[#e8d7c1] dark:border-[#cdaa80]/20">
+                  <NextLink href="/citizen/cases" className="text-[12px] font-semibold text-[#997953] dark:text-[#e0c3a0] hover:underline">
+                    View all case updates
+                  </NextLink>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Scrollable Chat Area */}
@@ -633,3 +782,5 @@ export default function CitizenHome() {
     </div>
   );
 }
+
+type NotificationRow = Database['public']['Tables']['notifications']['Row'];

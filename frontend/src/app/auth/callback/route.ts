@@ -78,7 +78,7 @@ export async function GET(request: Request) {
       }
 
       if (roleData.role === 'lawyer') {
-        return NextResponse.redirect(`${origin}/portal/dashboard`)
+        return NextResponse.redirect(`${origin}/lawyerside/home`)
       }
       if (roleData.role === 'admin') {
         return NextResponse.redirect(`${origin}/admin/dashboard`)

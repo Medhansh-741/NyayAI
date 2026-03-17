@@ -102,6 +102,7 @@ export default function LawyerMyCasesPage() {
   const [items, setItems] = useState<KanbanItem[]>([])
   const [updatingPipelineId, setUpdatingPipelineId] = useState<string | null>(null)
   const [selectedItem, setSelectedItem] = useState<KanbanItem | null>(null)
+  const [removingPipelineId, setRemovingPipelineId] = useState<string | null>(null)
 
   const handleProfileClick = () => {
     router.push('/lawyerside/profile')
@@ -245,6 +246,27 @@ export default function LawyerMyCasesPage() {
     await moveStage(item, targetStage)
   }, [items, moveStage])
 
+  const removeFromLawyerBoard = useCallback(async (item: KanbanItem) => {
+    setRemovingPipelineId(item.pipeline.id)
+
+    const { error: pipelineError } = await supabase
+      .from('case_pipeline')
+      .update({ stage: 'withdrawn' })
+      .eq('id', item.pipeline.id)
+
+    if (pipelineError) {
+      setError(pipelineError.message)
+      setRemovingPipelineId(null)
+      return
+    }
+
+    setRemovingPipelineId(null)
+    if (selectedItem?.pipeline.id === item.pipeline.id) {
+      setSelectedItem(null)
+    }
+    await fetchMyCases()
+  }, [fetchMyCases, selectedItem])
+
   function DraggableCard({ item }: { item: KanbanItem }) {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.pipeline.id })
     const style = {
@@ -256,7 +278,7 @@ export default function LawyerMyCasesPage() {
       <article
         ref={setNodeRef}
         style={style}
-        className={`rounded-lg border border-[#e7d9c7] dark:border-[#cdaa80]/20 p-3 bg-[#fdf9f3] dark:bg-[#12254a]/60 cursor-grab active:cursor-grabbing ${
+        className={`relative rounded-lg border border-[#e7d9c7] dark:border-[#cdaa80]/20 p-3 bg-[#fdf9f3] dark:bg-[#12254a]/60 cursor-grab active:cursor-grabbing ${
           isDragging ? 'opacity-70 ring-2 ring-[#997953]/30 dark:ring-[#cdaa80]/30' : ''
         }`}
         onClick={() => setSelectedItem(item)}
@@ -264,6 +286,18 @@ export default function LawyerMyCasesPage() {
         {...attributes}
         {...listeners}
       >
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            void removeFromLawyerBoard(item)
+          }}
+          disabled={removingPipelineId === item.pipeline.id}
+          className="absolute top-2 right-2 w-6 h-6 rounded-full border border-[#997953]/30 bg-white/80 text-[#5b4b3d] hover:bg-[#0f1e3f] hover:text-[#cdaa80] transition-colors disabled:opacity-60"
+          title="Remove from My Cases"
+        >
+          {removingPipelineId === item.pipeline.id ? '…' : '×'}
+        </button>
         <div className="text-[10px] uppercase font-bold tracking-wide text-[#997953] dark:text-[#cdaa80] mb-1">
           {formatDomain(item.caseData.domain)}
         </div>

@@ -1,7 +1,6 @@
 "use client";
 
 import Header from "../../components/header";
-import { Footer } from "../../components/footer";
 import Scene from "../../components/Scene";
 
 export default function Page() {
@@ -65,7 +64,7 @@ export default function Page() {
         </div>
       </section>
 
-      <Footer />
+      {/* Footer removed */}
     </main>
   );
 }

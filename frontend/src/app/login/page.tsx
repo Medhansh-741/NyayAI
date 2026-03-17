@@ -1,5 +1,4 @@
 import Header from "../../../components/header";
-import { Footer } from "../../../components/footer";
 import AnimatedAuth from '../../../components/auth/AnimatedAuth';
 
 export default function LoginPage() {
@@ -34,8 +33,6 @@ export default function LoginPage() {
           rightPanelImage="/Background_light.png"
         />
       </div>
-
-      <Footer />
     </main>
   );
 }

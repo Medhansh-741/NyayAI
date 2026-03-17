@@ -3,16 +3,19 @@
 import React, { useEffect, useMemo, useRef, useState,} from 'react';
 import gsap from 'gsap';
 import { useGSAP } from '@gsap/react';
-import { Footer } from '../../../../components/footer';
 import { Sidebar } from '../../../../components/sidebar';
 import { useTheme } from '../../../../components/themeprovider';
 import { supabase } from '@/lib/supabase/client';
 import { getCitizenCases } from '@/lib/db/cases';
+import { getNotifications, markAllNotificationsRead, markNotificationRead, subscribeToNotifications } from '@/lib/db/notifications';
 import type { Database } from '@/types/supabase';
 import * as Dialog from '@radix-ui/react-dialog';
 import { acceptOffer, getCasePipelineForCitizen } from '@/lib/db/pipeline';
+import { toast } from 'sonner';
+import NextLink from 'next/link';
 
 type CaseRow = Database['public']['Tables']['cases']['Row'];
+type NotificationRow = Database['public']['Tables']['notifications']['Row'];
 
 function formatUiStatus(caseRow: CaseRow): string {
   if (caseRow.status === 'completed') return 'Case Completed'
@@ -44,6 +47,39 @@ export default function CaseHistory() {
   const [offersError, setOffersError] = useState<string | null>(null)
   const [offers, setOffers] = useState<Database['public']['Tables']['case_pipeline']['Row'][]>([])
   const [acceptingOfferId, setAcceptingOfferId] = useState<string | null>(null)
+  const [recentlyMatchedIds, setRecentlyMatchedIds] = useState<Set<string>>(new Set())
+  const [notificationOpen, setNotificationOpen] = useState(false)
+  const [notificationLoading, setNotificationLoading] = useState(false)
+  const [notifications, setNotifications] = useState<NotificationRow[]>([])
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0)
+  const notificationRef = useRef<HTMLDivElement | null>(null)
+
+  const onlyLawyerAcceptance = (rows: NotificationRow[]) =>
+    rows.filter((row) => {
+      if (row.type === 'offer_accepted') return true
+      const title = (row.title ?? '').toLowerCase()
+      const body = (row.body ?? '').toLowerCase()
+      return title.includes('accepted') || body.includes('accepted')
+    })
+
+  const formatRelativeTime = (iso: string | null) => {
+    if (!iso) return 'Just now'
+    const then = new Date(iso).getTime()
+    const now = Date.now()
+    const diffMin = Math.floor((now - then) / 60000)
+    if (diffMin < 1) return 'Just now'
+    if (diffMin < 60) return `${diffMin}m ago`
+    const diffHr = Math.floor(diffMin / 60)
+    if (diffHr < 24) return `${diffHr}h ago`
+    const diffDay = Math.floor(diffHr / 24)
+    return `${diffDay}d ago`
+  }
+
+  const extractCaseId = (notification: NotificationRow) => {
+    const payload = notification.data as Record<string, unknown> | null
+    const candidate = payload?.case_id ?? payload?.caseId
+    return typeof candidate === 'string' ? candidate : null
+  }
 
   useEffect(() => {
     async function load() {
@@ -64,6 +100,89 @@ export default function CaseHistory() {
       }
     }
     void load()
+
+    // ── Real-time subscription ─────────────────────────────
+    const channel = supabase
+      .channel('citizen-cases-realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'cases',
+        },
+        async (payload) => {
+          const updatedCase = payload.new as CaseRow;
+          const oldCase = payload.old as CaseRow;
+
+          // Only care if it's the current citizen's case
+          const { data: { user } } = await supabase.auth.getUser();
+          if (user && updatedCase.citizen_id === user.id) {
+            // Check for specific transition: seeking_lawyer -> lawyer_matched
+            if (oldCase.status === 'seeking_lawyer' && updatedCase.status === 'lawyer_matched') {
+              toast.success(`Great news! A lawyer has accepted your case: ${updatedCase.title}`, {
+                description: 'You can now view the details and start collaborating.',
+                duration: 8000,
+              });
+
+              // Track this ID for visual highlighting
+              setRecentlyMatchedIds((prev) => new Set(prev).add(updatedCase.id));
+              // Remove highlight after 1 minute (or when they refresh)
+              setTimeout(() => {
+                setRecentlyMatchedIds((prev) => {
+                  const next = new Set(prev);
+                  next.delete(updatedCase.id);
+                  return next;
+                });
+              }, 60000);
+            }
+
+            // Refresh the case list to reflect any status change immediately
+            const { data } = await getCitizenCases(user.id);
+            if (data) setDbCases(data);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [])
+
+  const loadAcceptanceNotifications = async () => {
+    const { data: authData, error: authError } = await supabase.auth.getUser()
+    if (authError || !authData.user) return
+
+    setNotificationLoading(true)
+    const { data, error } = await getNotifications(authData.user.id, 30)
+    setNotificationLoading(false)
+    if (error) return
+
+    const filtered = onlyLawyerAcceptance(data ?? [])
+    setNotifications(filtered)
+    setUnreadNotificationCount(filtered.filter((row) => !row.is_read).length)
+  }
+
+  useEffect(() => {
+    let channel: ReturnType<typeof subscribeToNotifications> | null = null
+
+    const init = async () => {
+      await loadAcceptanceNotifications()
+      const { data: authData, error: authError } = await supabase.auth.getUser()
+      if (authError || !authData.user) return
+      channel = subscribeToNotifications(authData.user.id, async () => {
+        await loadAcceptanceNotifications()
+      })
+    }
+
+    void init()
+
+    return () => {
+      if (channel) {
+        channel.unsubscribe()
+      }
+    }
   }, [])
 
   const openCaseDetails = async (caseId: string) => {
@@ -72,6 +191,16 @@ export default function CaseHistory() {
     setOffersError(null)
     setOffers([])
     if (!caseRow) return
+
+    // Always fetch the latest case row for the modal so status + AI draft fields are synced.
+    const { data: freshCase, error: freshErr } = await supabase
+      .from('cases')
+      .select('*')
+      .eq('id', caseId)
+      .maybeSingle()
+    if (!freshErr && freshCase) {
+      setSelectedCase(freshCase as CaseRow)
+    }
 
     setOffersLoading(true)
     const { data: pipelineRows, error: pipelineErr } = await getCasePipelineForCitizen(caseRow.id)
@@ -110,6 +239,28 @@ export default function CaseHistory() {
     else setDbCases(casesData ?? [])
 
     setAcceptingOfferId(null)
+  }
+
+  const handleMarkAllRead = async () => {
+    const { data: authData, error: authError } = await supabase.auth.getUser()
+    if (authError || !authData.user) return
+    await markAllNotificationsRead(authData.user.id)
+    setNotifications((prev) => prev.map((row) => ({ ...row, is_read: true })))
+    setUnreadNotificationCount(0)
+  }
+
+  const handleNotificationClick = async (notification: NotificationRow) => {
+    await markNotificationRead(notification.id)
+    setNotifications((prev) =>
+      prev.map((row) => (row.id === notification.id ? { ...row, is_read: true } : row))
+    )
+    setUnreadNotificationCount((prev) => Math.max(prev - 1, 0))
+
+    const caseId = extractCaseId(notification)
+    if (caseId) {
+      await openCaseDetails(caseId)
+    }
+    setNotificationOpen(false)
   }
 
   const sortOptions: Array<{ label: string; value: typeof sortOption }> = [
@@ -160,6 +311,9 @@ export default function CaseHistory() {
     function handle(e: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setIsSortOpen(false);
+      }
+      if (notificationRef.current && !notificationRef.current.contains(e.target as Node)) {
+        setNotificationOpen(false)
       }
     }
     document.addEventListener('mousedown', handle);
@@ -269,16 +423,92 @@ export default function CaseHistory() {
       </div>
       <div className="flex-1 max-w-[1200px] mx-auto p-6 md:p-8 text-gray-900 dark:text-white flex flex-col pb-24 md:pb-8">
         {/* Top Header/Nav Area */}
-        <div className="cases-top-nav flex border-b border-[#d8c1a1] dark:border-[#213a56] pb-2 mb-6 shrink-0">
+        <div className="cases-top-nav relative z-[120] flex items-center justify-between border-b border-[#d8c1a1] dark:border-[#213a56] pb-2 mb-6 shrink-0">
           <nav className="flex gap-6 text-sm">
             <button className="text-[#cdaa80] border-b-2 border-[#cdaa80] pb-2 font-medium">
               Cases
             </button>
           </nav>
+
+          <div ref={notificationRef} className="relative z-[130]">
+            <button
+              title="Notifications"
+              onClick={async () => {
+                const next = !notificationOpen
+                setNotificationOpen(next)
+                if (next) {
+                  await loadAcceptanceNotifications()
+                }
+              }}
+              className="relative flex items-center justify-center w-10 h-10 rounded-full border border-[#d8c1a1] dark:border-white/10 bg-white dark:bg-[#12284f]/80 text-[#443831] dark:text-[#cdaa80] hover:bg-[#f9f2e8] dark:hover:bg-[#213a56] transition-all duration-300"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+              </svg>
+              {unreadNotificationCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-[#b0372f] text-white text-[10px] font-bold flex items-center justify-center">
+                  {unreadNotificationCount > 99 ? '99+' : unreadNotificationCount}
+                </span>
+              )}
+            </button>
+
+            {notificationOpen && (
+              <div className="absolute right-0 mt-3 w-[320px] md:w-[360px] rounded-2xl border border-[#d8c1a1]/60 dark:border-[#cdaa80]/20 bg-white/95 dark:bg-[#12284f]/95 backdrop-blur-md shadow-2xl overflow-hidden z-[9999]">
+                <div className="px-4 py-3 border-b border-[#e8d7c1] dark:border-[#cdaa80]/20 flex items-center justify-between">
+                  <div>
+                    <p className="text-[12px] uppercase tracking-[1.5px] text-[#7b5f40] dark:text-[#cdaa80] font-semibold">Notifications</p>
+                    <p className="text-[12px] text-[#6b5a49] dark:text-white/70">Lawyer acceptance updates</p>
+                  </div>
+                  <button
+                    onClick={handleMarkAllRead}
+                    className="text-[11px] font-semibold text-[#997953] dark:text-[#e0c3a0] hover:underline"
+                  >
+                    Mark all read
+                  </button>
+                </div>
+
+                <div className="max-h-[320px] overflow-y-auto custom-scrollbar">
+                  {notificationLoading ? (
+                    <div className="px-4 py-5 text-sm text-[#6b5a49] dark:text-white/70">Loading notifications...</div>
+                  ) : notifications.length === 0 ? (
+                    <div className="px-4 py-5 text-sm text-[#6b5a49] dark:text-white/70">No lawyer acceptance notifications yet.</div>
+                  ) : (
+                    notifications.map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => { void handleNotificationClick(item) }}
+                        className={`w-full text-left block px-4 py-3 border-b border-[#efe1ce] dark:border-[#cdaa80]/10 hover:bg-[#f9f2e8] dark:hover:bg-[#1a3358] transition-colors ${
+                          item.is_read ? 'opacity-80' : ''
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <p className="text-[13px] font-semibold text-[#3f3124] dark:text-white/90 leading-snug">
+                            {item.title || 'A lawyer accepted your request'}
+                          </p>
+                          <span className="text-[11px] text-[#7b5f40] dark:text-white/60 whitespace-nowrap">
+                            {formatRelativeTime(item.created_at)}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-[12px] text-[#6b5a49] dark:text-white/75 leading-relaxed">
+                          {item.body || 'Tap to open your case updates.'}
+                        </p>
+                      </button>
+                    ))
+                  )}
+                </div>
+
+                <div className="px-4 py-2 bg-[#f8efe2] dark:bg-[#10264a] border-t border-[#e8d7c1] dark:border-[#cdaa80]/20">
+                  <NextLink href="/citizen/cases" className="text-[12px] font-semibold text-[#997953] dark:text-[#e0c3a0] hover:underline">
+                    View all case updates
+                  </NextLink>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Search and Filters Area */}
-        <div className="cases-search-sort flex flex-col md:flex-row justify-between items-center gap-6 mb-6 shrink-0 font-sans w-full relative z-40">
+        <div className="cases-search-sort flex flex-col md:flex-row justify-between items-center gap-6 mb-6 shrink-0 font-sans w-full relative z-20">
           <div
             ref={searchContainerRef}
             className="search-shell w-full relative group rounded-full border border-[#d8c1a1] dark:border-[#2b4b6b] bg-white dark:bg-[#12284f]/85 shadow-[0_8px_24px_rgba(68,56,49,0.08)] dark:shadow-[0_8px_24px_rgba(8,18,40,0.28)] overflow-hidden transition-colors duration-300"
@@ -311,7 +541,7 @@ export default function CaseHistory() {
           </div>
 
           {/* Sort Dropdown - Marketplace Style */}
-          <div className="relative z-50 shrink-0" ref={dropdownRef}>
+          <div className="relative z-30 shrink-0" ref={dropdownRef}>
             <button
               onClick={() => setIsSortOpen((v) => !v)}
               className={`flex items-center gap-3 bg-white dark:bg-[#0f1e3f] border border-[#d8c1a1] dark:border-[#cdaa80]/50 text-[#443831] dark:text-[#cdaa80] px-4 py-2.5 rounded-lg transition-colors focus:ring-2 focus:ring-[#997953]/20 dark:focus:ring-[#cdaa80]/30 outline-none shadow-sm w-56 ${
@@ -420,6 +650,11 @@ export default function CaseHistory() {
                 `}>
                     {c.status}
                   </span>
+                  {recentlyMatchedIds.has(c.id) && (
+                    <span className="inline-flex items-center px-3 py-1.5 rounded-full text-[11px] font-bold bg-emerald-500 text-white animate-pulse shadow-[0_0_12px_rgba(16,185,129,0.4)]">
+                      Just Matched!
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -512,11 +747,15 @@ export default function CaseHistory() {
                                 <div className="text-sm font-sans text-[#2f261f] dark:text-white/85 font-medium">
                                   {typeof o.offer_amount === 'number' ? `₹${o.offer_amount.toLocaleString('en-IN')}` : 'Offer received'}
                                 </div>
-                                {o.offer_message && (
-                                  <div className="mt-1 text-[12px] font-sans text-[#5b4b3d] dark:text-white/70 break-words">
-                                    {o.offer_message}
-                                  </div>
-                                )}
+                                {(() => {
+                                  const offerText = (o as { offer_message?: string; offer_note?: string }).offer_message ?? o.offer_note
+                                  if (!offerText) return null
+                                  return (
+                                    <div className="mt-1 text-[12px] font-sans text-[#5b4b3d] dark:text-white/70 break-words">
+                                      {offerText}
+                                    </div>
+                                  )
+                                })()}
                                 <div className="mt-1 text-[11px] font-sans text-[#5b4b3d] dark:text-white/60">
                                   {o.offer_sent_at ? new Date(o.offer_sent_at).toLocaleString('en-IN') : ''}
                                 </div>
@@ -597,20 +836,6 @@ export default function CaseHistory() {
         }
       `}} />
 
-        <Footer
-          themeColors={{
-            bgLight: '#f5f0e8',
-            bgDark: '#0f1e3f',
-            cardBgLight: '#e9dfd2',
-            cardBgDark: '#0f1e3f',
-            textLight: '#443831',
-            textDark: '#cdaa80',
-            accent: '#cdaa80',
-            accentHover: '#997953',
-          }}
-          logoText="NyayAI"
-          copyrightText="© 2026 NyayAI. All rights reserved."
-        />
       </div>
     </div>
   );
