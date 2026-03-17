@@ -4,14 +4,14 @@ import { useRouter } from 'next/navigation';
 import { Sidebar } from '../../../../components/sidebar';
 import type { NavItem } from '../../../../components/sidebar';
 import gsap from 'gsap';
-import { Menu, Home, Compass, Store, Briefcase } from 'lucide-react';
+import { Menu, Home, Compass, Store, Gavel } from 'lucide-react';
 
 const LAWYER_NAV_ITEMS: NavItem[] = [
   { id: 'menu', icon: Menu, label: 'Menu' },
   { id: 'home', icon: Home, label: 'Home', href: '/lawyerside/home' },
   { id: 'explorer', icon: Compass, label: 'Explorer', href: '/lawyerside/explorer' },
   { id: 'marketplace', icon: Store, label: 'Marketplace', href: '/lawyerside/marketplace' },
-  { id: 'yourcases', icon: Briefcase, label: 'Your Cases', href: '/lawyerside/yourcases' },
+  { id: 'my-cases', icon: Gavel, label: 'My Cases', href: '/lawyerside/my-cases' },
 ];
 
 export default function LawyerHome() {

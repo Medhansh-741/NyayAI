@@ -7,25 +7,30 @@ import type { NavItem } from '../../../../components/sidebar';
 import { LiquidSlider } from '../../../../components/LiquidSlider';
 import { supabase } from '@/lib/supabase/client';
 import type { Database } from '@/types/supabase';
-import { Menu, Home, Compass, Store, Briefcase } from 'lucide-react';
+import { Menu, Home, Compass, Store, Gavel } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { acceptOffer } from '@/lib/db/pipeline';
+import * as Dialog from '@radix-ui/react-dialog';
 
 type CaseRow = Database['public']['Tables']['cases']['Row'];
 type LawyerProfile = Database['public']['Tables']['lawyer_profiles']['Row'];
 type PipelineRow = Database['public']['Tables']['case_pipeline']['Row'];
 
+type AnonymousCase = Pick<CaseRow, 'id' | 'title' | 'domain' | 'status' | 'state' | 'district' | 'incident_description' | 'incident_date' | 'budget_min' | 'budget_max' | 'confidence_score' | 'created_at'>;
+
 interface OfferedCase {
   pipeline: PipelineRow;
-  caseData: CaseRow;
+  caseData: AnonymousCase;
 }
 
 function formatStage(stage: string | null): string {
   if (!stage) return 'Pending'
   const labels: Record<string, string> = {
-    offer_sent: 'Offer Sent',
+    pending: 'Pending',
+    offered: 'Offered',
     accepted: 'Accepted',
-    in_progress: 'In Progress',
+    active: 'In Progress',
     completed: 'Completed',
-    rejected: 'Rejected',
     withdrawn: 'Withdrawn',
   }
   return labels[stage] ?? stage.replace(/_/g, ' ')
@@ -34,9 +39,8 @@ function formatStage(stage: string | null): string {
 function stageColor(stage: string | null): string {
   switch (stage) {
     case 'accepted':    return 'bg-emerald-500/20 text-emerald-700'
-    case 'in_progress': return 'bg-blue-500/20 text-blue-700'
+    case 'active':      return 'bg-blue-500/20 text-blue-700'
     case 'completed':   return 'bg-purple-500/20 text-purple-700'
-    case 'rejected':    return 'bg-red-500/20 text-red-700'
     case 'withdrawn':   return 'bg-gray-500/20 text-gray-600'
     default:            return 'bg-amber-500/20 text-amber-700'
   }
@@ -47,7 +51,7 @@ const LAWYER_NAV_ITEMS: NavItem[] = [
   { id: 'home', icon: Home, label: 'Home', href: '/lawyerside/home' },
   { id: 'explorer', icon: Compass, label: 'Explorer', href: '/lawyerside/explorer' },
   { id: 'marketplace', icon: Store, label: 'Marketplace', href: '/lawyerside/marketplace' },
-  { id: 'yourcases', icon: Briefcase, label: 'Your Cases', href: '/lawyerside/yourcases' },
+  { id: 'my-cases', icon: Gavel, label: 'My Cases', href: '/lawyerside/my-cases' },
 ];
 
 const DOMAIN_LABELS: Record<string, string> = {
@@ -96,6 +100,11 @@ function formatBudget(min: number | null, max: number | null): string {
   return `₹${min!.toLocaleString('en-IN')} – ₹${max!.toLocaleString('en-IN')}`
 }
 
+function formatDate(dateStr: string | null): string {
+  if (!dateStr) return 'Unknown'
+  return new Date(dateStr).toLocaleString('en-IN', { year: 'numeric', month: 'short', day: '2-digit' })
+}
+
 function timeAgo(dateStr: string | null): string {
   if (!dateStr) return 'Unknown'
   const diff = Date.now() - new Date(dateStr).getTime()
@@ -121,8 +130,9 @@ function parseBudget(str: string): number {
 }
 
 export default function LawyerCaseMarketplace() {
+  const router = useRouter()
   const [lawyerProfile, setLawyerProfile] = useState<LawyerProfile | null>(null)
-  const [allCases, setAllCases]             = useState<CaseRow[]>([])
+  const [allCases, setAllCases]             = useState<AnonymousCase[]>([])
   const [offeredCases, setOfferedCases]     = useState<OfferedCase[]>([])
   const [isLoading, setIsLoading]           = useState(true)
   const [offeredLoading, setOfferedLoading] = useState(true)
@@ -130,6 +140,30 @@ export default function LawyerCaseMarketplace() {
   const [offeredError, setOfferedError]     = useState<string | null>(null)
   const [hoveredCard, setHoveredCard]       = useState<string | null>(null)
   const [activeTab, setActiveTab]           = useState<'left' | 'right'>('left')
+  const [acceptingPipelineId, setAcceptingPipelineId] = useState<string | null>(null)
+  const [now, setNow] = useState<number>(0)
+  const [selectedAvailable, setSelectedAvailable] = useState<AnonymousCase | null>(null)
+  const [selectedOffered, setSelectedOffered] = useState<OfferedCase | null>(null)
+
+  const handleProfileClick = () => {
+    router.push('/lawyerside/profile')
+  }
+
+  const handleAcceptOffer = useCallback(async (pipelineId: string, caseId: string) => {
+    setAcceptingPipelineId(pipelineId)
+    const { error } = await acceptOffer(pipelineId, caseId)
+    setAcceptingPipelineId(null)
+    if (error) {
+      setOfferedError(error.message)
+      return
+    }
+
+    // Instant UI feedback: remove from Offered list
+    setOfferedCases((prev) => prev.filter((o) => o.pipeline.id !== pipelineId))
+    setSelectedOffered(null)
+
+    router.push('/lawyerside/my-cases')
+  }, [router])
 
   const statusPillClass = dbError
     ? 'bg-red-50 text-red-700 ring-1 ring-red-200 dark:bg-red-500/20 dark:text-red-300 dark:ring-red-500/20'
@@ -207,7 +241,8 @@ export default function LawyerCaseMarketplace() {
       // 4. Fetch cases that are seeking a lawyer (Available tab)
       let query = supabase
         .from('cases')
-        .select('*')
+        // keep citizen anonymous for lawyers: do not fetch citizen_id
+        .select('id, title, domain, status, state, district, incident_description, incident_date, budget_min, budget_max, confidence_score, created_at')
         .eq('is_seeking_lawyer', true)
         .eq('status', 'seeking_lawyer')
         .order('created_at', { ascending: false })
@@ -231,6 +266,7 @@ export default function LawyerCaseMarketplace() {
         .from('case_pipeline')
         .select('*')
         .eq('lawyer_id', user.id)
+        .eq('stage', 'offered')
         .order('created_at', { ascending: false })
 
       if (pipelineErr) {
@@ -249,7 +285,8 @@ export default function LawyerCaseMarketplace() {
       const caseIds = myPipeline.map(p => p.case_id)
       const { data: offeredCasesData, error: offCasesErr } = await supabase
         .from('cases')
-        .select('*')
+        // keep citizen anonymous for lawyers: do not fetch citizen_id
+        .select('id, title, domain, status, state, district, incident_description, incident_date, budget_min, budget_max, confidence_score, created_at')
         .in('id', caseIds)
 
       if (offCasesErr) {
@@ -294,6 +331,11 @@ export default function LawyerCaseMarketplace() {
     return () => { void supabase.removeChannel(channel) }
   }, [fetchData])
 
+  useEffect(() => {
+    // snapshot time for render-purity lint and stable filtering
+    setNow(Date.now())
+  }, [activeTab, selectedRecency])
+
   // ── Derived filter options (uses active list) ─────────
   const activeCaseList = activeTab === 'left' ? allCases : offeredCases.map(o => o.caseData)
 
@@ -314,7 +356,7 @@ export default function LawyerCaseMarketplace() {
     if (selectedRecency !== 'Any Time') {
       const opt = recencyOptions.find(o => o.label === selectedRecency)
       if (opt) {
-        const cutoff = Date.now() - opt.ms
+        const cutoff = now - opt.ms
         result = result.filter(c => c.created_at && new Date(c.created_at).getTime() >= cutoff)
       }
     }
@@ -337,7 +379,7 @@ export default function LawyerCaseMarketplace() {
     if (selectedRecency !== 'Any Time') {
       const opt = recencyOptions.find(o => o.label === selectedRecency)
       if (opt) {
-        const cutoff = Date.now() - opt.ms
+        const cutoff = now - opt.ms
         result = result.filter(o => o.pipeline.created_at && new Date(o.pipeline.created_at).getTime() >= cutoff)
       }
     }
@@ -402,7 +444,7 @@ export default function LawyerCaseMarketplace() {
   return (
     <div className="flex min-h-screen bg-gray-50 dark:bg-[#0f1e3f]">
       <div className="md:sticky md:top-0 md:h-screen shrink-0 z-50">
-        <Sidebar navItems={LAWYER_NAV_ITEMS} />
+        <Sidebar navItems={LAWYER_NAV_ITEMS} showProfileButton={true} onProfileClick={handleProfileClick} />
       </div>
 
       <div className="flex-1 max-w-[1200px] mx-auto p-6 md:p-10 text-gray-900 dark:text-white font-serif">
@@ -653,9 +695,13 @@ export default function LawyerCaseMarketplace() {
                               Seeking Lawyer
                             </div>
                           </div>
-                          <div className={`md:hidden px-5 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 text-center mt-2 w-full max-w-[140px] ${hoveredCard === caseItem.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'}`}>
-                            Send Offer
-                          </div>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); setSelectedAvailable(caseItem) }}
+                            className={`md:hidden px-5 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 text-center mt-2 w-full max-w-[160px] ${hoveredCard === caseItem.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'}`}
+                          >
+                            View case
+                          </button>
                         </div>
                       </div>
                       {/* Right */}
@@ -664,9 +710,13 @@ export default function LawyerCaseMarketplace() {
                           <div className="text-[17px] font-bold font-serif mb-1">{budget}</div>
                           <div className="text-[11px] text-[#0f1e3f]/50 whitespace-nowrap">Client Budget</div>
                         </div>
-                        <div className={`px-6 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 mt-4 text-center ${hoveredCard === caseItem.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'}`}>
-                          Send Offer
-                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setSelectedAvailable(caseItem) }}
+                          className={`px-6 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 mt-4 text-center ${hoveredCard === caseItem.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'}`}
+                        >
+                          View case
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -703,7 +753,7 @@ export default function LawyerCaseMarketplace() {
                 </svg>
                 <h3 className="text-xl font-serif text-[#997953] dark:text-[#cdaa80] mb-2">No offered cases</h3>
                 <p className="text-gray-600 dark:text-white/60 font-sans max-w-md">
-                  You haven&apos;t sent any offers yet. Browse available cases and send offers to represent clients.
+                  No citizens have requested you yet. When they do, requests will appear here for you to accept.
                 </p>
               </div>
             ) : (
@@ -788,8 +838,22 @@ export default function LawyerCaseMarketplace() {
                               </div>
                             )}
                           </div>
-                          <div className={`md:hidden px-5 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 text-center mt-2 w-full max-w-[140px] ${hoveredCard === pipeline.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'}`}>
-                            View Case
+                          <div className="flex gap-2 flex-wrap">
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); setSelectedOffered({ pipeline, caseData }) }}
+                              className={`md:hidden px-5 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 text-center mt-2 w-full max-w-[160px] ${hoveredCard === pipeline.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'}`}
+                            >
+                              View case
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); void handleAcceptOffer(pipeline.id, caseData.id) }}
+                              disabled={acceptingPipelineId === pipeline.id}
+                              className={`md:hidden px-5 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 text-center mt-2 w-full max-w-[180px] ${hoveredCard === pipeline.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'} disabled:opacity-60`}
+                            >
+                              {acceptingPipelineId === pipeline.id ? 'Accepting…' : 'Accept offer'}
+                            </button>
                           </div>
                         </div>
                       </div>
@@ -803,8 +867,22 @@ export default function LawyerCaseMarketplace() {
                             {pipeline.offer_amount ? 'Your Offer' : 'Client Budget'}
                           </div>
                         </div>
-                        <div className={`px-6 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 mt-4 text-center ${hoveredCard === pipeline.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'}`}>
-                          View Case
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); setSelectedOffered({ pipeline, caseData }) }}
+                            className={`px-6 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 mt-4 text-center ${hoveredCard === pipeline.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'}`}
+                          >
+                            View case
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); void handleAcceptOffer(pipeline.id, caseData.id) }}
+                            disabled={acceptingPipelineId === pipeline.id}
+                            className={`px-6 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 mt-4 text-center ${hoveredCard === pipeline.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'} disabled:opacity-60`}
+                          >
+                            {acceptingPipelineId === pipeline.id ? 'Accepting…' : 'Accept offer'}
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -814,6 +892,154 @@ export default function LawyerCaseMarketplace() {
             )}
           </div>
         )}
+
+        {/* View Case Modal (Available) */}
+        <Dialog.Root open={!!selectedAvailable} onOpenChange={(open) => { if (!open) setSelectedAvailable(null) }}>
+          <Dialog.Portal>
+            <Dialog.Overlay className="fixed inset-0 bg-black/40 backdrop-blur-[1px]" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 w-[92vw] max-w-[640px] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white dark:bg-[#0a152e] border border-[#e3d4bf] dark:border-[#cdaa80]/25 shadow-2xl p-5 md:p-6">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <Dialog.Title className="text-lg md:text-xl font-serif text-[#997953] dark:text-[#cdaa80]">
+                    {selectedAvailable?.title ?? 'Untitled Case'}
+                  </Dialog.Title>
+                  <Dialog.Description className="mt-1 text-sm font-sans text-[#5b4b3d] dark:text-white/70">
+                    {selectedAvailable ? formatDomain(selectedAvailable.domain) : ''}
+                  </Dialog.Description>
+                </div>
+                <Dialog.Close className="rounded-lg px-3 py-1.5 text-sm font-sans border border-[#d8c1a1] dark:border-[#cdaa80]/30 hover:bg-[#f9f4ec] dark:hover:bg-[#12254a]">
+                  Close
+                </Dialog.Close>
+              </div>
+
+              {selectedAvailable && (
+                <div className="mt-4 space-y-3">
+                  <div className="text-sm font-sans text-[#2f261f] dark:text-white/85 leading-relaxed">
+                    {selectedAvailable.incident_description ?? 'No description provided.'}
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="rounded-xl border border-[#e7d9c7] dark:border-[#cdaa80]/20 p-3">
+                      <div className="text-[11px] uppercase tracking-wide font-bold text-[#997953] dark:text-[#cdaa80]">Budget</div>
+                      <div className="mt-1 text-sm font-sans text-[#2f261f] dark:text-white/80">
+                        {formatBudget(selectedAvailable.budget_min, selectedAvailable.budget_max)}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-[#e7d9c7] dark:border-[#cdaa80]/20 p-3">
+                      <div className="text-[11px] uppercase tracking-wide font-bold text-[#997953] dark:text-[#cdaa80]">Posted</div>
+                      <div className="mt-1 text-sm font-sans text-[#2f261f] dark:text-white/80">
+                        {formatDate(selectedAvailable.created_at)}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {selectedAvailable.state && (
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-sans bg-[#997953]/10 text-[#5b4b3d] dark:bg-[#cdaa80]/10 dark:text-white/70">
+                        {selectedAvailable.district ? `${selectedAvailable.district}, ` : ''}{selectedAvailable.state}
+                      </span>
+                    )}
+                    {selectedAvailable.incident_date && (
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-sans bg-[#997953]/10 text-[#5b4b3d] dark:bg-[#cdaa80]/10 dark:text-white/70">
+                        Incident: {new Date(selectedAvailable.incident_date).toLocaleDateString('en-IN')}
+                      </span>
+                    )}
+                    {selectedAvailable.confidence_score !== null && selectedAvailable.confidence_score !== undefined && (
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-sans bg-[#997953]/10 text-[#5b4b3d] dark:bg-[#cdaa80]/10 dark:text-white/70">
+                        Confidence: {(selectedAvailable.confidence_score * 100).toFixed(0)}%
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+
+        {/* View Case Modal (Offered) */}
+        <Dialog.Root open={!!selectedOffered} onOpenChange={(open) => { if (!open) setSelectedOffered(null) }}>
+          <Dialog.Portal>
+            <Dialog.Overlay className="fixed inset-0 bg-black/40 backdrop-blur-[1px]" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 w-[92vw] max-w-[680px] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white dark:bg-[#0a152e] border border-[#e3d4bf] dark:border-[#cdaa80]/25 shadow-2xl p-5 md:p-6">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <Dialog.Title className="text-lg md:text-xl font-serif text-[#997953] dark:text-[#cdaa80]">
+                    {selectedOffered?.caseData.title ?? 'Untitled Case'}
+                  </Dialog.Title>
+                  <Dialog.Description className="mt-1 text-sm font-sans text-[#5b4b3d] dark:text-white/70">
+                    {selectedOffered ? formatDomain(selectedOffered.caseData.domain) : ''}
+                  </Dialog.Description>
+                </div>
+                <Dialog.Close className="rounded-lg px-3 py-1.5 text-sm font-sans border border-[#d8c1a1] dark:border-[#cdaa80]/30 hover:bg-[#f9f4ec] dark:hover:bg-[#12254a]">
+                  Close
+                </Dialog.Close>
+              </div>
+
+              {selectedOffered && (
+                <div className="mt-4 space-y-3">
+                  <div className="text-sm font-sans text-[#2f261f] dark:text-white/85 leading-relaxed">
+                    {selectedOffered.caseData.incident_description ?? 'No description provided.'}
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="rounded-xl border border-[#e7d9c7] dark:border-[#cdaa80]/20 p-3">
+                      <div className="text-[11px] uppercase tracking-wide font-bold text-[#997953] dark:text-[#cdaa80]">Budget</div>
+                      <div className="mt-1 text-sm font-sans text-[#2f261f] dark:text-white/80">
+                        {formatBudget(selectedOffered.caseData.budget_min, selectedOffered.caseData.budget_max)}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-[#e7d9c7] dark:border-[#cdaa80]/20 p-3">
+                      <div className="text-[11px] uppercase tracking-wide font-bold text-[#997953] dark:text-[#cdaa80]">Requested</div>
+                      <div className="mt-1 text-sm font-sans text-[#2f261f] dark:text-white/80">
+                        {formatDate(selectedOffered.pipeline.offer_sent_at ?? selectedOffered.pipeline.created_at)}
+                      </div>
+                    </div>
+                  </div>
+
+                  {selectedOffered.pipeline.offer_note && (
+                    <div className="rounded-xl border border-[#e7d9c7] dark:border-[#cdaa80]/20 p-3 bg-[#fdf9f3] dark:bg-[#12254a]/60">
+                      <div className="text-[11px] uppercase tracking-wide font-bold text-[#997953] dark:text-[#cdaa80]">Citizen note</div>
+                      <div className="mt-1 text-sm font-sans text-[#2f261f] dark:text-white/80">
+                        {selectedOffered.pipeline.offer_note}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {selectedOffered.caseData.state && (
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-sans bg-[#997953]/10 text-[#5b4b3d] dark:bg-[#cdaa80]/10 dark:text-white/70">
+                        {selectedOffered.caseData.district ? `${selectedOffered.caseData.district}, ` : ''}{selectedOffered.caseData.state}
+                      </span>
+                    )}
+                    {selectedOffered.caseData.incident_date && (
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-sans bg-[#997953]/10 text-[#5b4b3d] dark:bg-[#cdaa80]/10 dark:text-white/70">
+                        Incident: {new Date(selectedOffered.caseData.incident_date).toLocaleDateString('en-IN')}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="pt-3 flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { setSelectedOffered(null) }}
+                      className="px-4 py-2 rounded-lg text-sm font-sans border border-[#d8c1a1] dark:border-[#cdaa80]/30 hover:bg-[#f9f4ec] dark:hover:bg-[#12254a]"
+                    >
+                      Close
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { void handleAcceptOffer(selectedOffered.pipeline.id, selectedOffered.caseData.id) }}
+                      disabled={acceptingPipelineId === selectedOffered.pipeline.id}
+                      className="px-4 py-2 rounded-lg text-sm font-sans border border-[#0f1e3f]/30 bg-[#0f1e3f] text-[#cdaa80] hover:bg-[#0f1e3f]/90 disabled:opacity-60"
+                    >
+                      {acceptingPipelineId === selectedOffered.pipeline.id ? 'Accepting…' : 'Accept offer'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
 
         <style dangerouslySetInnerHTML={{ __html: `
           .custom-scrollbar::-webkit-scrollbar { width: 5px; }
