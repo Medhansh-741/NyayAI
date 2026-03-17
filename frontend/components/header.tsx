@@ -50,11 +50,9 @@ const DEFAULT_THEME: HeaderThemeColors = {
 };
 
 const DEFAULT_NAV_ITEMS: NavItem[] = [
-  { label: "HOME", href: "/" },
-  { label: "COLLECTION", href: "/collection" },
-  { label: "ARTISTS", href: "/artists" },
-  { label: "EVENTS", href: "/events" },
-  { label: "VISIT", href: "/visit" },
+  { label: "Home", href: "/" },
+  { label: "About Us", href: "/about" },
+  { label: "Contact", href: "/contact" },
 ];
 
 
