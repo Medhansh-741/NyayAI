@@ -1,0 +1,826 @@
+'use client';
+
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import gsap from 'gsap';
+import { Sidebar } from '../../../../components/sidebar';
+import type { NavItem } from '../../../../components/sidebar';
+import { LiquidSlider } from '../../../../components/LiquidSlider';
+import { supabase } from '@/lib/supabase/client';
+import type { Database } from '@/types/supabase';
+import { Menu, Home, Compass, Store } from 'lucide-react';
+
+type CaseRow = Database['public']['Tables']['cases']['Row'];
+type LawyerProfile = Database['public']['Tables']['lawyer_profiles']['Row'];
+type PipelineRow = Database['public']['Tables']['case_pipeline']['Row'];
+
+interface OfferedCase {
+  pipeline: PipelineRow;
+  caseData: CaseRow;
+}
+
+function formatStage(stage: string | null): string {
+  if (!stage) return 'Pending'
+  const labels: Record<string, string> = {
+    offer_sent: 'Offer Sent',
+    accepted: 'Accepted',
+    in_progress: 'In Progress',
+    completed: 'Completed',
+    rejected: 'Rejected',
+    withdrawn: 'Withdrawn',
+  }
+  return labels[stage] ?? stage.replace(/_/g, ' ')
+}
+
+function stageColor(stage: string | null): string {
+  switch (stage) {
+    case 'accepted':    return 'bg-emerald-500/20 text-emerald-700'
+    case 'in_progress': return 'bg-blue-500/20 text-blue-700'
+    case 'completed':   return 'bg-purple-500/20 text-purple-700'
+    case 'rejected':    return 'bg-red-500/20 text-red-700'
+    case 'withdrawn':   return 'bg-gray-500/20 text-gray-600'
+    default:            return 'bg-amber-500/20 text-amber-700'
+  }
+}
+
+const LAWYER_NAV_ITEMS: NavItem[] = [
+  { id: 'menu', icon: Menu, label: 'Menu' },
+  { id: 'home', icon: Home, label: 'Home', href: '/lawyerside/home' },
+  { id: 'explorer', icon: Compass, label: 'Explorer', href: '/lawyerside/explorer' },
+  { id: 'marketplace', icon: Store, label: 'Marketplace', href: '/lawyerside/marketplace' },
+];
+
+const DOMAIN_LABELS: Record<string, string> = {
+  consumer:              'Consumer Disputes',
+  tenant:                'Tenant / Rent',
+  labour:                'Labour & Employment',
+  criminal:              'Criminal Law',
+  cyber:                 'Cyber Crime',
+  property:              'Property Law',
+  family:                'Family Law',
+  rti:                   'RTI',
+  corruption:            'Anti-Corruption',
+  civil:                 'Civil Law',
+  other:                 'General Practice',
+  tax:                   'Tax Law',
+  corporate:             'Corporate / Business',
+  intellectual_property: 'Intellectual Property',
+  constitutional:        'Constitutional / PIL',
+  banking_finance:       'Banking & Finance',
+  insurance:             'Insurance',
+  matrimonial:           'Matrimonial',
+  immigration:           'Immigration',
+  environmental:         'Environmental Law',
+  medical_negligence:    'Medical Negligence',
+  motor_accident:        'Motor Accident Claims',
+  cheque_bounce:         'Cheque Bounce (NI Act)',
+  debt_recovery:         'Debt Recovery',
+  arbitration:           'Arbitration & ADR',
+  service_matters:       'Service Matters',
+  land_acquisition:      'Land Acquisition',
+  wills_succession:      'Wills & Succession',
+  domestic_violence:     'Domestic Violence',
+  pocso:                 'POCSO',
+  sc_st_atrocities:      'SC/ST Atrocities Act',
+  divorce:               'Divorce',
+}
+
+function formatDomain(domain: string): string {
+  return DOMAIN_LABELS[domain] ?? domain.replace(/_/g, ' ')
+}
+
+function formatBudget(min: number | null, max: number | null): string {
+  if (!min && !max) return 'Budget not specified'
+  if (min && !max)  return `From ₹${min.toLocaleString('en-IN')}`
+  if (!min && max)  return `Up to ₹${max.toLocaleString('en-IN')}`
+  return `₹${min!.toLocaleString('en-IN')} – ₹${max!.toLocaleString('en-IN')}`
+}
+
+function timeAgo(dateStr: string | null): string {
+  if (!dateStr) return 'Unknown'
+  const diff = Date.now() - new Date(dateStr).getTime()
+  const mins  = Math.floor(diff / 60000)
+  if (mins < 60)  return `${mins}m ago`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  if (days < 30)  return `${days}d ago`
+  return `${Math.floor(days / 30)}mo ago`
+}
+
+const allBudgetLabels = [
+  '₹0','₹5k','₹10k','₹20k','₹30k','₹50k','₹75k','₹1L','₹1.5L','₹2L','₹3L','₹5L+'
+]
+
+function parseBudget(str: string): number {
+  if (!str || str === '₹0') return 0
+  if (str === '₹5L+') return 999999999
+  if (str.includes('k'))  return parseInt(str.replace('₹','').replace('k','')) * 1000
+  if (str.includes('L'))  return parseFloat(str.replace('₹','').replace('L','')) * 100000
+  return 0
+}
+
+export default function LawyerCaseMarketplace() {
+  const [lawyerProfile, setLawyerProfile] = useState<LawyerProfile | null>(null)
+  const [allCases, setAllCases]             = useState<CaseRow[]>([])
+  const [offeredCases, setOfferedCases]     = useState<OfferedCase[]>([])
+  const [isLoading, setIsLoading]           = useState(true)
+  const [offeredLoading, setOfferedLoading] = useState(true)
+  const [dbError, setDbError]               = useState<string | null>(null)
+  const [offeredError, setOfferedError]     = useState<string | null>(null)
+  const [hoveredCard, setHoveredCard]       = useState<string | null>(null)
+  const [activeTab, setActiveTab]           = useState<'left' | 'right'>('left')
+
+  const statusPillClass = dbError
+    ? 'bg-red-50 text-red-700 ring-1 ring-red-200 dark:bg-red-500/20 dark:text-red-300 dark:ring-red-500/20'
+    : 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 dark:bg-green-500/20 dark:text-green-300 dark:ring-green-500/20'
+
+  const statusDotClass = dbError
+    ? 'bg-red-500 dark:bg-red-400'
+    : 'bg-emerald-500 dark:bg-green-400 animate-pulse'
+
+  // ── Budget wheel ───────────────────────────────────────
+  const [selectedBudgetIndex, setSelectedBudgetIndex] = useState<number>(allBudgetLabels.length - 1)
+
+  // ── Domain dropdown ────────────────────────────────────
+  const [isDomainOpen, setIsDomainOpen]       = useState(false)
+  const [selectedDomain, setSelectedDomain]   = useState('Legal Domain')
+  const dropdownRef                           = useRef<HTMLDivElement>(null)
+  const dropdownContentRef                    = useRef<HTMLDivElement>(null)
+
+  // ── Recency dropdown ───────────────────────────────────
+  const [isRecencyOpen, setIsRecencyOpen]       = useState(false)
+  const [selectedRecency, setSelectedRecency]   = useState('Any Time')
+  const recDropdownRef                          = useRef<HTMLDivElement>(null)
+  const recDropdownContentRef                   = useRef<HTMLDivElement>(null)
+
+  const recencyOptions = useMemo(() => [
+    { label: 'Last 24 hours',  ms: 24 * 60 * 60 * 1000 },
+    { label: 'Last 7 days',    ms: 7 * 24 * 60 * 60 * 1000 },
+    { label: 'Last 30 days',   ms: 30 * 24 * 60 * 60 * 1000 },
+    { label: 'Last 90 days',   ms: 90 * 24 * 60 * 60 * 1000 },
+  ], [])
+
+  // ── Fetch lawyer profile + unassigned cases ────────────
+  const fetchData = useCallback(async () => {
+    setIsLoading(true)
+    setOfferedLoading(true)
+    setDbError(null)
+    setOfferedError(null)
+
+    try {
+      // 1. Get current user
+      const { data: { user }, error: authError } = await supabase.auth.getUser()
+      if (authError || !user) {
+        setDbError('Not authenticated. Please log in.')
+        setOfferedError('Not authenticated. Please log in.')
+        setIsLoading(false)
+        setOfferedLoading(false)
+        return
+      }
+
+      // 2. Get lawyer profile for specialisations
+      const { data: profile, error: profileError } = await supabase
+        .from('lawyer_profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single()
+
+      if (profileError || !profile) {
+        setDbError('Lawyer profile not found.')
+        setOfferedError('Lawyer profile not found.')
+        setIsLoading(false)
+        setOfferedLoading(false)
+        return
+      }
+      setLawyerProfile(profile)
+
+      const specialisations = profile.specialisations ?? []
+
+      // 3. Get all assigned case IDs from case_pipeline
+      const { data: pipelineData } = await supabase
+        .from('case_pipeline')
+        .select('case_id')
+
+      const assignedCaseIds = new Set((pipelineData ?? []).map(p => p.case_id))
+
+      // 4. Fetch cases that are seeking a lawyer (Available tab)
+      let query = supabase
+        .from('cases')
+        .select('*')
+        .eq('is_seeking_lawyer', true)
+        .eq('status', 'seeking_lawyer')
+        .order('created_at', { ascending: false })
+
+      if (specialisations.length > 0) {
+        query = query.in('domain', specialisations)
+      }
+
+      const { data: casesData, error: casesError } = await query
+
+      if (casesError) {
+        setDbError(casesError.message)
+      } else {
+        const unassigned = (casesData ?? []).filter(c => !assignedCaseIds.has(c.id))
+        setAllCases(unassigned)
+      }
+      setIsLoading(false)
+
+      // 5. Fetch this lawyer's offered/pipeline cases (Offered tab)
+      const { data: myPipeline, error: pipelineErr } = await supabase
+        .from('case_pipeline')
+        .select('*')
+        .eq('lawyer_id', user.id)
+        .order('created_at', { ascending: false })
+
+      if (pipelineErr) {
+        setOfferedError(pipelineErr.message)
+        setOfferedLoading(false)
+        return
+      }
+
+      if (!myPipeline || myPipeline.length === 0) {
+        setOfferedCases([])
+        setOfferedLoading(false)
+        return
+      }
+
+      // 6. Fetch the case details for each pipeline entry
+      const caseIds = myPipeline.map(p => p.case_id)
+      const { data: offeredCasesData, error: offCasesErr } = await supabase
+        .from('cases')
+        .select('*')
+        .in('id', caseIds)
+
+      if (offCasesErr) {
+        setOfferedError(offCasesErr.message)
+        setOfferedLoading(false)
+        return
+      }
+
+      const caseMap = new Map((offeredCasesData ?? []).map(c => [c.id, c]))
+      const merged: OfferedCase[] = myPipeline
+        .filter(p => caseMap.has(p.case_id))
+        .map(p => ({ pipeline: p, caseData: caseMap.get(p.case_id)! }))
+
+      setOfferedCases(merged)
+    } catch (err) {
+      console.error('Error fetching data:', err)
+      setDbError('Unexpected error loading cases.')
+      setOfferedError('Unexpected error loading cases.')
+    }
+
+    setIsLoading(false)
+    setOfferedLoading(false)
+  }, [])
+
+  useEffect(() => {
+    fetchData()
+
+    const channel = supabase
+      .channel('lawyer-case-marketplace-live')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'cases' },
+        () => { fetchData() }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'case_pipeline' },
+        () => { fetchData() }
+      )
+      .subscribe()
+
+    return () => { void supabase.removeChannel(channel) }
+  }, [fetchData])
+
+  // ── Derived filter options (uses active list) ─────────
+  const activeCaseList = activeTab === 'left' ? allCases : offeredCases.map(o => o.caseData)
+
+  const domainOptions = useMemo(() => {
+    const domains = new Set<string>()
+    activeCaseList.forEach(c => domains.add(c.domain))
+    return Array.from(domains).sort()
+  }, [activeCaseList])
+
+  // ── Filtered results (Available Cases) ─────────────────
+  const filteredCases = useMemo(() => {
+    let result = [...allCases]
+
+    if (selectedDomain !== 'Legal Domain') {
+      result = result.filter(c => c.domain === selectedDomain)
+    }
+
+    if (selectedRecency !== 'Any Time') {
+      const opt = recencyOptions.find(o => o.label === selectedRecency)
+      if (opt) {
+        const cutoff = Date.now() - opt.ms
+        result = result.filter(c => c.created_at && new Date(c.created_at).getTime() >= cutoff)
+      }
+    }
+
+    const idx   = Math.min(selectedBudgetIndex, allBudgetLabels.length - 1)
+    const maxB  = parseBudget(allBudgetLabels[idx] ?? '₹5L+')
+    result = result.filter(c => !c.budget_min || c.budget_min <= maxB)
+
+    return result
+  }, [allCases, selectedDomain, selectedRecency, selectedBudgetIndex, recencyOptions])
+
+  // ── Filtered results (Offered Cases) ───────────────────
+  const filteredOffered = useMemo(() => {
+    let result = [...offeredCases]
+
+    if (selectedDomain !== 'Legal Domain') {
+      result = result.filter(o => o.caseData.domain === selectedDomain)
+    }
+
+    if (selectedRecency !== 'Any Time') {
+      const opt = recencyOptions.find(o => o.label === selectedRecency)
+      if (opt) {
+        const cutoff = Date.now() - opt.ms
+        result = result.filter(o => o.pipeline.created_at && new Date(o.pipeline.created_at).getTime() >= cutoff)
+      }
+    }
+
+    const idx   = Math.min(selectedBudgetIndex, allBudgetLabels.length - 1)
+    const maxB  = parseBudget(allBudgetLabels[idx] ?? '₹5L+')
+    result = result.filter(o => !o.caseData.budget_min || o.caseData.budget_min <= maxB)
+
+    return result
+  }, [offeredCases, selectedDomain, selectedRecency, selectedBudgetIndex, recencyOptions])
+
+  // ── Click outside ──────────────────────────────────────
+  useEffect(() => {
+    function handle(e: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setIsDomainOpen(false)
+      }
+      if (recDropdownRef.current && !recDropdownRef.current.contains(e.target as Node)) {
+        setIsRecencyOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handle)
+    return () => document.removeEventListener('mousedown', handle)
+  }, [])
+
+  // ── GSAP dropdowns ─────────────────────────────────────
+  useEffect(() => {
+    if (!dropdownContentRef.current) return
+    if (isDomainOpen) {
+      gsap.fromTo(dropdownContentRef.current,
+        { opacity: 0, y: -10, scaleY: 0.9, transformOrigin: 'top center' },
+        { opacity: 1, y: 0, scaleY: 1, duration: 0.2, ease: 'power2.out', display: 'block' }
+      )
+    } else {
+      gsap.to(dropdownContentRef.current, {
+        opacity: 0, y: -10, scaleY: 0.9, duration: 0.15, ease: 'power2.in',
+        onComplete: () => {
+          if (dropdownContentRef.current) dropdownContentRef.current.style.display = 'none'
+        }
+      })
+    }
+  }, [isDomainOpen])
+
+  useEffect(() => {
+    if (!recDropdownContentRef.current) return
+    if (isRecencyOpen) {
+      gsap.fromTo(recDropdownContentRef.current,
+        { opacity: 0, y: -10, scaleY: 0.9, transformOrigin: 'top center' },
+        { opacity: 1, y: 0, scaleY: 1, duration: 0.2, ease: 'power2.out', display: 'block' }
+      )
+    } else {
+      gsap.to(recDropdownContentRef.current, {
+        opacity: 0, y: -10, scaleY: 0.9, duration: 0.15, ease: 'power2.in',
+        onComplete: () => {
+          if (recDropdownContentRef.current) recDropdownContentRef.current.style.display = 'none'
+        }
+      })
+    }
+  }, [isRecencyOpen])
+
+  // ── Render ─────────────────────────────────────────────
+  return (
+    <div className="flex min-h-screen bg-gray-50 dark:bg-[#0f1e3f]">
+      <div className="md:sticky md:top-0 md:h-screen shrink-0 z-50">
+        <Sidebar navItems={LAWYER_NAV_ITEMS} />
+      </div>
+
+      <div className="flex-1 max-w-[1200px] mx-auto p-6 md:p-10 text-gray-900 dark:text-white font-serif">
+
+        {/* Header */}
+        <div className="mb-10">
+          <h1 className="text-3xl font-medium tracking-wide text-[#997953] dark:text-[#cdaa80] mb-2 font-serif">
+            Case Marketplace
+          </h1>
+          <p className="text-gray-600 dark:text-white/70 text-[15px] font-sans">
+            Browse unassigned cases matching your specialisations and send offers to represent clients.
+          </p>
+          {!(activeTab === 'left' ? isLoading : offeredLoading) && (
+            <div className={`mt-3 inline-flex items-center gap-2 text-xs font-sans px-3 py-1 rounded-full ${activeTab === 'left' ? statusPillClass : (offeredError ? statusPillClass : statusPillClass)}`}>
+              <div className={`w-1.5 h-1.5 rounded-full ${activeTab === 'left' ? statusDotClass : (offeredError ? 'bg-red-500 dark:bg-red-400' : statusDotClass)}`} />
+              {activeTab === 'left'
+                ? (dbError ? `Error: ${dbError}` : `${filteredCases.length} of ${allCases.length} cases shown`)
+                : (offeredError ? `Error: ${offeredError}` : `${filteredOffered.length} of ${offeredCases.length} offered cases shown`)
+              }
+            </div>
+          )}
+          {lawyerProfile && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {(lawyerProfile.specialisations ?? []).map(spec => (
+                <span key={spec} className="px-2.5 py-0.5 bg-[#997953]/10 dark:bg-[#cdaa80]/15 rounded-full text-[11px] font-sans text-[#997953] dark:text-[#cdaa80] font-medium">
+                  {formatDomain(spec)}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Tab Slider */}
+        <div className="mb-10 flex justify-center">
+          <LiquidSlider
+            leftLabel="Available Cases"
+            rightLabel="Offered Cases"
+            value={activeTab}
+            onChange={setActiveTab}
+          />
+        </div>
+
+        {/* Filters */}
+        <div className="flex flex-col md:flex-row justify-between items-center gap-6 mb-12 font-sans w-full relative z-40">
+
+          {/* Domain Filter */}
+          <div className="relative z-50 shrink-0" ref={dropdownRef}>
+            <button
+              onClick={() => setIsDomainOpen(v => !v)}
+              className={`flex items-center gap-3 bg-white dark:bg-[#0f1e3f] border border-[#d8c1a1] dark:border-[#cdaa80]/50 text-[#443831] dark:text-[#cdaa80] px-4 py-2.5 rounded-lg transition-colors focus:ring-2 focus:ring-[#997953]/20 dark:focus:ring-[#cdaa80]/30 outline-none shadow-sm w-56 ${isDomainOpen ? 'bg-[#f7efe5] ring-1 ring-[#997953]/30 dark:bg-[#213a56] dark:ring-[#cdaa80]/50' : 'hover:bg-[#f9f4ec] dark:hover:bg-[#213a56]'}`}
+            >
+              <svg className="w-5 h-5 shrink-0 opacity-80" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" />
+              </svg>
+              <span className="flex-1 text-left text-sm truncate">{selectedDomain}</span>
+              <svg className={`w-4 h-4 shrink-0 transition-transform duration-300 ${isDomainOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            <div
+              ref={dropdownContentRef}
+              className="absolute top-full left-0 mt-2 w-56 bg-white dark:bg-[#0f1e3f] border border-[#e3d4bf] dark:border-[#cdaa80]/30 rounded-lg shadow-[0_18px_45px_rgba(68,56,49,0.14)] dark:shadow-2xl overflow-hidden"
+              style={{ display: 'none' }}
+            >
+              <div className="max-h-[240px] overflow-y-auto custom-scrollbar py-1">
+                <button
+                  onClick={() => { setSelectedDomain('Legal Domain'); setIsDomainOpen(false) }}
+                  className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${selectedDomain === 'Legal Domain' ? 'bg-[#f6ede1] text-[#997953] font-medium dark:bg-[#cdaa80]/20 dark:text-[#cdaa80]' : 'text-[#5b4b3d] hover:bg-[#f8f1e7] hover:text-[#443831] dark:text-white/80 dark:hover:bg-[#213a56] dark:hover:text-[#cdaa80]'}`}
+                >
+                  All Domains
+                </button>
+                {domainOptions.map(type => (
+                  <button
+                    key={type}
+                    onClick={() => { setSelectedDomain(type); setIsDomainOpen(false) }}
+                    className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${selectedDomain === type ? 'bg-[#f6ede1] text-[#997953] font-medium dark:bg-[#cdaa80]/20 dark:text-[#cdaa80]' : 'text-[#5b4b3d] hover:bg-[#f8f1e7] hover:text-[#443831] dark:text-white/80 dark:hover:bg-[#213a56] dark:hover:text-[#cdaa80]'}`}
+                  >
+                    {formatDomain(type)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Budget Wheel */}
+          <div className="relative w-full md:w-[420px] h-16 bg-[#f5eee2] dark:bg-[#0a152e] shrink-0 flex items-center justify-center overflow-hidden rounded-full border border-[#dcc7aa] dark:border-[#cdaa80]/20 shadow-[inset_0_2px_8px_rgba(153,121,83,0.12),_0_10px_24px_rgba(68,56,49,0.08)] dark:shadow-[inset_0_4px_12px_rgba(0,0,0,0.5),_0_8px_32px_rgba(0,0,0,0.4)]">
+            <div className="absolute left-0 w-24 h-full bg-gradient-to-r from-[#f5eee2] via-[#f5eee2]/80 to-transparent dark:from-[#0a152e] dark:via-[#0a152e]/80 z-20 pointer-events-none rounded-l-full" />
+            <div className="absolute right-0 w-24 h-full bg-gradient-to-l from-[#f5eee2] via-[#f5eee2]/80 to-transparent dark:from-[#0a152e] dark:via-[#0a152e]/80 z-20 pointer-events-none rounded-r-full" />
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[84px] h-[46px] bg-white/90 dark:bg-[#cdaa80]/15 border border-[#c7ab88] dark:border-[#cdaa80]/70 rounded-full z-10 pointer-events-none shadow-[0_0_18px_rgba(153,121,83,0.16)] dark:shadow-[0_0_20px_rgba(205,170,128,0.3)]" />
+            <div
+              className="absolute top-1/2 left-1/2 flex items-center transition-transform duration-500 ease-out z-10"
+              style={{ transform: `translate(calc(-${selectedBudgetIndex * 84 + 42}px), -50%)` }}
+            >
+              {allBudgetLabels.map((price, idx) => {
+                const dist       = Math.abs(idx - selectedBudgetIndex)
+                const isSelected = dist === 0
+                return (
+                  <div
+                    key={price}
+                    onClick={() => setSelectedBudgetIndex(idx)}
+                    className={`w-[84px] shrink-0 text-center cursor-pointer transition-all duration-300 font-serif tracking-wide text-[16px] ${isSelected ? 'text-[#997953] drop-shadow-[0_0_10px_rgba(153,121,83,0.28)] dark:text-[#cdaa80] dark:drop-shadow-[0_0_12px_rgba(205,170,128,1)]' : 'text-[#7b6958]/60 hover:text-[#443831] dark:text-[#cdaa80]/50 dark:hover:text-[#cdaa80]/80'}`}
+                    style={{
+                      transform: `scale(${isSelected ? 1.05 : Math.max(0.7, 1 - dist * 0.15)})`,
+                      opacity:    isSelected ? 1 : Math.max(0.15, 1 - dist * 0.25),
+                    }}
+                  >
+                    {price}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Recency Filter */}
+          <div className="relative z-50 shrink-0" ref={recDropdownRef}>
+            <button
+              onClick={() => setIsRecencyOpen(v => !v)}
+              className={`flex items-center gap-3 bg-white dark:bg-[#0f1e3f] border border-[#d8c1a1] dark:border-[#cdaa80]/50 text-[#443831] dark:text-[#cdaa80] px-4 py-2.5 rounded-lg transition-colors focus:ring-2 focus:ring-[#997953]/20 dark:focus:ring-[#cdaa80]/30 outline-none shadow-sm w-56 ${isRecencyOpen ? 'bg-[#f7efe5] ring-1 ring-[#997953]/30 dark:bg-[#213a56] dark:ring-[#cdaa80]/50' : 'hover:bg-[#f9f4ec] dark:hover:bg-[#213a56]'}`}
+            >
+              <svg className="w-5 h-5 shrink-0 opacity-80" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span className="flex-1 text-left text-sm truncate">{selectedRecency}</span>
+              <svg className={`w-4 h-4 shrink-0 transition-transform duration-300 ${isRecencyOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            <div
+              ref={recDropdownContentRef}
+              className="absolute top-full left-0 mt-2 w-56 bg-white dark:bg-[#0f1e3f] border border-[#e3d4bf] dark:border-[#cdaa80]/30 rounded-lg shadow-[0_18px_45px_rgba(68,56,49,0.14)] dark:shadow-2xl overflow-hidden"
+              style={{ display: 'none' }}
+            >
+              <div className="max-h-[240px] overflow-y-auto custom-scrollbar py-1">
+                <button
+                  onClick={() => { setSelectedRecency('Any Time'); setIsRecencyOpen(false) }}
+                  className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${selectedRecency === 'Any Time' ? 'bg-[#f6ede1] text-[#997953] font-medium dark:bg-[#cdaa80]/20 dark:text-[#cdaa80]' : 'text-[#5b4b3d] hover:bg-[#f8f1e7] hover:text-[#443831] dark:text-white/80 dark:hover:bg-[#213a56] dark:hover:text-[#cdaa80]'}`}
+                >
+                  Any Time
+                </button>
+                {recencyOptions.map(opt => (
+                  <button
+                    key={opt.label}
+                    onClick={() => { setSelectedRecency(opt.label); setIsRecencyOpen(false) }}
+                    className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${selectedRecency === opt.label ? 'bg-[#f6ede1] text-[#997953] font-medium dark:bg-[#cdaa80]/20 dark:text-[#cdaa80]' : 'text-[#5b4b3d] hover:bg-[#f8f1e7] hover:text-[#443831] dark:text-white/80 dark:hover:bg-[#213a56] dark:hover:text-[#cdaa80]'}`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ══════════════════════════════════════════════════ */}
+        {/* AVAILABLE CASES TAB                               */}
+        {/* ══════════════════════════════════════════════════ */}
+        {activeTab === 'left' && (
+          <div className="space-y-6">
+            {isLoading ? (
+              <div className="flex justify-center items-center py-20">
+                <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-[#997953] dark:border-[#cdaa80]" />
+              </div>
+            ) : dbError ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center border border-dashed border-red-400/30 rounded-xl">
+                <p className="text-red-400 font-sans text-sm">Failed to load cases</p>
+                <p className="text-red-400/60 font-mono text-xs mt-1">{dbError}</p>
+                <button
+                  onClick={fetchData}
+                  className="mt-4 px-4 py-2 bg-[#997953]/10 text-[#997953] border border-[#997953]/20 rounded-lg text-sm hover:bg-[#997953]/15 dark:bg-[#cdaa80]/20 dark:text-[#cdaa80] dark:border-transparent dark:hover:bg-[#cdaa80]/25 transition-colors"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : filteredCases.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center border border-dashed border-[#d8c1a1] dark:border-[#cdaa80]/30 rounded-xl bg-white/80 dark:bg-[#0a152e]/50 shadow-sm">
+                <svg className="w-12 h-12 text-[#997953]/40 dark:text-[#cdaa80]/40 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <h3 className="text-xl font-serif text-[#997953] dark:text-[#cdaa80] mb-2">No cases found</h3>
+                <p className="text-gray-600 dark:text-white/60 font-sans max-w-md">
+                  There are no unassigned cases matching your specialisations right now. Check back later or adjust your filters.
+                </p>
+              </div>
+            ) : (
+              filteredCases.map(caseItem => {
+                const budget = formatBudget(caseItem.budget_min, caseItem.budget_max)
+                const posted = timeAgo(caseItem.created_at)
+                const confidence = caseItem.confidence_score
+                  ? `${(caseItem.confidence_score * 100).toFixed(0)}%`
+                  : null
+
+                return (
+                  <div
+                    key={caseItem.id}
+                    onMouseEnter={() => setHoveredCard(caseItem.id)}
+                    onMouseLeave={() => setHoveredCard(null)}
+                    className={`block bg-white dark:bg-[#cdaa80] text-[#0f1e3f] rounded-xl p-6 md:p-8 transition-all duration-300 ease-out cursor-pointer relative overflow-hidden shadow-lg border border-gray-100 dark:border-transparent ${hoveredCard === caseItem.id ? 'transform -translate-y-1 shadow-2xl brightness-105' : ''}`}
+                  >
+                    <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'radial-gradient(#0f1e3f 1px, transparent 1px)', backgroundSize: '20px 20px' }} />
+
+                    <div className="flex flex-col md:flex-row justify-between gap-6 relative z-10">
+                      {/* Left */}
+                      <div className="flex-1 space-y-3">
+                        <div className="flex justify-between items-start gap-4">
+                          <span className="inline-block px-1.5 py-0.5 bg-[#0f1e3f]/10 rounded text-[10px] font-bold tracking-wider font-sans text-[#0f1e3f]/70 uppercase">
+                            {formatDomain(caseItem.domain)}
+                          </span>
+                          <div className="md:hidden text-right font-sans">
+                            <div className="text-lg font-bold font-serif">{budget}</div>
+                          </div>
+                        </div>
+                        <h2 className="text-xl md:text-2xl font-medium tracking-tight">
+                          <span className="font-semibold">{caseItem.title ?? 'Untitled Case'}</span>
+                        </h2>
+                        <p className="text-[#0f1e3f]/80 text-[14px] leading-relaxed font-sans max-w-4xl pr-4 line-clamp-2">
+                          {caseItem.incident_description ?? 'No description provided.'}
+                        </p>
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          {caseItem.state && (
+                            <span className="px-2 py-0.5 bg-[#0f1e3f]/10 rounded-full text-[10px] font-sans text-[#0f1e3f]/60">
+                              📍 {caseItem.district ? `${caseItem.district}, ` : ''}{caseItem.state}
+                            </span>
+                          )}
+                          {caseItem.incident_date && (
+                            <span className="px-2 py-0.5 bg-[#0f1e3f]/10 rounded-full text-[10px] font-sans text-[#0f1e3f]/60">
+                              📅 Incident: {new Date(caseItem.incident_date).toLocaleDateString('en-IN')}
+                            </span>
+                          )}
+                          {confidence && (
+                            <span className="px-2 py-0.5 bg-[#0f1e3f]/10 rounded-full text-[10px] font-sans text-[#0f1e3f]/60">
+                              🎯 Confidence: {confidence}
+                            </span>
+                          )}
+                        </div>
+                        <div className="pt-4 flex items-center justify-between font-sans flex-wrap gap-2">
+                          <div className="flex items-center gap-4 flex-wrap">
+                            <div className="flex items-center gap-1.5 text-sm text-[#0f1e3f]/70">
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                              Posted {posted}
+                            </div>
+                            <div className="flex items-center gap-1 text-sm font-medium text-[#0f1e3f]/90">
+                              <div className="bg-emerald-500/20 w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-bold text-emerald-700">●</div>
+                              Seeking Lawyer
+                            </div>
+                          </div>
+                          <div className={`md:hidden px-5 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 text-center mt-2 w-full max-w-[140px] ${hoveredCard === caseItem.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'}`}>
+                            Send Offer
+                          </div>
+                        </div>
+                      </div>
+                      {/* Right */}
+                      <div className="hidden md:flex flex-col items-end justify-between shrink-0 pl-6 border-l border-[#0f1e3f]/10">
+                        <div className="text-right font-sans">
+                          <div className="text-[17px] font-bold font-serif mb-1">{budget}</div>
+                          <div className="text-[11px] text-[#0f1e3f]/50 whitespace-nowrap">Client Budget</div>
+                        </div>
+                        <div className={`px-6 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 mt-4 text-center ${hoveredCard === caseItem.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'}`}>
+                          Send Offer
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })
+            )}
+          </div>
+        )}
+
+        {/* ══════════════════════════════════════════════════ */}
+        {/* OFFERED CASES TAB                                 */}
+        {/* ══════════════════════════════════════════════════ */}
+        {activeTab === 'right' && (
+          <div className="space-y-6">
+            {offeredLoading ? (
+              <div className="flex justify-center items-center py-20">
+                <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-[#997953] dark:border-[#cdaa80]" />
+              </div>
+            ) : offeredError ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center border border-dashed border-red-400/30 rounded-xl">
+                <p className="text-red-400 font-sans text-sm">Failed to load offered cases</p>
+                <p className="text-red-400/60 font-mono text-xs mt-1">{offeredError}</p>
+                <button
+                  onClick={fetchData}
+                  className="mt-4 px-4 py-2 bg-[#997953]/10 text-[#997953] border border-[#997953]/20 rounded-lg text-sm hover:bg-[#997953]/15 dark:bg-[#cdaa80]/20 dark:text-[#cdaa80] dark:border-transparent dark:hover:bg-[#cdaa80]/25 transition-colors"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : filteredOffered.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center border border-dashed border-[#d8c1a1] dark:border-[#cdaa80]/30 rounded-xl bg-white/80 dark:bg-[#0a152e]/50 shadow-sm">
+                <svg className="w-12 h-12 text-[#997953]/40 dark:text-[#cdaa80]/40 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                </svg>
+                <h3 className="text-xl font-serif text-[#997953] dark:text-[#cdaa80] mb-2">No offered cases</h3>
+                <p className="text-gray-600 dark:text-white/60 font-sans max-w-md">
+                  You haven&apos;t sent any offers yet. Browse available cases and send offers to represent clients.
+                </p>
+              </div>
+            ) : (
+              filteredOffered.map(({ pipeline, caseData }) => {
+                const budget = formatBudget(caseData.budget_min, caseData.budget_max)
+                const offerDate = timeAgo(pipeline.offer_sent_at ?? pipeline.created_at)
+                const confidence = caseData.confidence_score
+                  ? `${(caseData.confidence_score * 100).toFixed(0)}%`
+                  : null
+
+                return (
+                  <div
+                    key={pipeline.id}
+                    onMouseEnter={() => setHoveredCard(pipeline.id)}
+                    onMouseLeave={() => setHoveredCard(null)}
+                    className={`block bg-white dark:bg-[#cdaa80] text-[#0f1e3f] rounded-xl p-6 md:p-8 transition-all duration-300 ease-out cursor-pointer relative overflow-hidden shadow-lg border border-gray-100 dark:border-transparent ${hoveredCard === pipeline.id ? 'transform -translate-y-1 shadow-2xl brightness-105' : ''}`}
+                  >
+                    <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'radial-gradient(#0f1e3f 1px, transparent 1px)', backgroundSize: '20px 20px' }} />
+
+                    <div className="flex flex-col md:flex-row justify-between gap-6 relative z-10">
+                      {/* Left */}
+                      <div className="flex-1 space-y-3">
+                        <div className="flex justify-between items-start gap-4">
+                          <div className="flex items-center gap-2">
+                            <span className="inline-block px-1.5 py-0.5 bg-[#0f1e3f]/10 rounded text-[10px] font-bold tracking-wider font-sans text-[#0f1e3f]/70 uppercase">
+                              {formatDomain(caseData.domain)}
+                            </span>
+                            <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wider font-sans uppercase ${stageColor(pipeline.stage)}`}>
+                              {formatStage(pipeline.stage)}
+                            </span>
+                          </div>
+                          <div className="md:hidden text-right font-sans">
+                            <div className="text-lg font-bold font-serif">
+                              {pipeline.offer_amount ? `₹${pipeline.offer_amount.toLocaleString('en-IN')}` : budget}
+                            </div>
+                          </div>
+                        </div>
+                        <h2 className="text-xl md:text-2xl font-medium tracking-tight">
+                          <span className="font-semibold">{caseData.title ?? 'Untitled Case'}</span>
+                        </h2>
+                        <p className="text-[#0f1e3f]/80 text-[14px] leading-relaxed font-sans max-w-4xl pr-4 line-clamp-2">
+                          {caseData.incident_description ?? 'No description provided.'}
+                        </p>
+                        {pipeline.offer_note && (
+                          <div className="bg-[#0f1e3f]/5 rounded-lg px-3 py-2 text-[13px] font-sans text-[#0f1e3f]/70 italic">
+                            &ldquo;{pipeline.offer_note}&rdquo;
+                          </div>
+                        )}
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          {caseData.state && (
+                            <span className="px-2 py-0.5 bg-[#0f1e3f]/10 rounded-full text-[10px] font-sans text-[#0f1e3f]/60">
+                              📍 {caseData.district ? `${caseData.district}, ` : ''}{caseData.state}
+                            </span>
+                          )}
+                          {pipeline.offer_sent_at && (
+                            <span className="px-2 py-0.5 bg-[#0f1e3f]/10 rounded-full text-[10px] font-sans text-[#0f1e3f]/60">
+                              📤 Offer sent: {new Date(pipeline.offer_sent_at).toLocaleDateString('en-IN')}
+                            </span>
+                          )}
+                          {pipeline.accepted_at && (
+                            <span className="px-2 py-0.5 bg-emerald-500/15 rounded-full text-[10px] font-sans text-emerald-700">
+                              ✅ Accepted: {new Date(pipeline.accepted_at).toLocaleDateString('en-IN')}
+                            </span>
+                          )}
+                          {confidence && (
+                            <span className="px-2 py-0.5 bg-[#0f1e3f]/10 rounded-full text-[10px] font-sans text-[#0f1e3f]/60">
+                              🎯 Confidence: {confidence}
+                            </span>
+                          )}
+                        </div>
+                        <div className="pt-4 flex items-center justify-between font-sans flex-wrap gap-2">
+                          <div className="flex items-center gap-4 flex-wrap">
+                            <div className="flex items-center gap-1.5 text-sm text-[#0f1e3f]/70">
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                              Offered {offerDate}
+                            </div>
+                            {pipeline.outcome && (
+                              <div className="text-sm font-medium text-[#0f1e3f]/70 capitalize">
+                                Outcome: {pipeline.outcome}
+                              </div>
+                            )}
+                          </div>
+                          <div className={`md:hidden px-5 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 text-center mt-2 w-full max-w-[140px] ${hoveredCard === pipeline.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'}`}>
+                            View Case
+                          </div>
+                        </div>
+                      </div>
+                      {/* Right */}
+                      <div className="hidden md:flex flex-col items-end justify-between shrink-0 pl-6 border-l border-[#0f1e3f]/10">
+                        <div className="text-right font-sans">
+                          <div className="text-[17px] font-bold font-serif mb-1">
+                            {pipeline.offer_amount ? `₹${pipeline.offer_amount.toLocaleString('en-IN')}` : budget}
+                          </div>
+                          <div className="text-[11px] text-[#0f1e3f]/50 whitespace-nowrap">
+                            {pipeline.offer_amount ? 'Your Offer' : 'Client Budget'}
+                          </div>
+                        </div>
+                        <div className={`px-6 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 mt-4 text-center ${hoveredCard === pipeline.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'}`}>
+                          View Case
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })
+            )}
+          </div>
+        )}
+
+        <style dangerouslySetInnerHTML={{ __html: `
+          .custom-scrollbar::-webkit-scrollbar { width: 5px; }
+          .custom-scrollbar::-webkit-scrollbar-track { background: #f3eadf; border-radius: 8px; }
+          .custom-scrollbar::-webkit-scrollbar-thumb { background-color: rgba(153,121,83,0.35); border-radius: 8px; }
+          .custom-scrollbar::-webkit-scrollbar-thumb:hover { background-color: rgba(153,121,83,0.55); }
+          .dark .custom-scrollbar::-webkit-scrollbar-track { background: #0f1e3f; }
+          .dark .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #213a56; }
+          .dark .custom-scrollbar::-webkit-scrollbar-thumb:hover { background-color: rgba(205,170,128,0.5); }
+        `}} />
+      </div>
+    </div>
+  )
+}
