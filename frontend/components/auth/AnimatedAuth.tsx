@@ -3,19 +3,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import gsap from 'gsap';
 import { useGSAP } from '@gsap/react';
-import { User, Mail, Phone, ShieldCheck } from 'lucide-react';
+import { User, Mail } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { supabase } from '@/lib/supabase/client';
 import { useTheme } from '../themeprovider';
-import { 
-  signInWithGoogle, 
-  citizenSignupWithPhone, 
-  verifyCitizenOtp, 
-  lawyerSignup, 
-  lawyerSignin, 
-  forgotPassword 
-} from '@/lib/auth';
 
-// Register the hook to ensure proper cleanup in React strict mode
 gsap.registerPlugin(useGSAP);
 
 export interface AnimatedAuthProps {
@@ -51,6 +43,7 @@ export interface AnimatedAuthProps {
   rightPanelImage?: string;
 }
 
+// ✅ 'admin' removed — cannot be self-assigned via signup
 const roles = ['citizen', 'lawyer'] as const;
 type Role = (typeof roles)[number];
 
@@ -139,30 +132,17 @@ export default function AnimatedAuth({
   }, []);
 
   const [isLogin, setIsLogin] = useState(true);
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [signupName, setSignupName] = useState('');
+  const [signupEmail, setSignupEmail] = useState('');
+  const [signupPassword, setSignupPassword] = useState('');
+  const [showSignupPassword, setShowSignupPassword] = useState(false);
+  const [signupRole, setSignupRole] = useState<Role>('citizen');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState('');
-
-  // Role toggles
-  const [authRole, setAuthRole] = useState<Role>('citizen');
-
-  // Login State
-  const [loginEmail, setLoginEmail] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
-  const [loginPhone, setLoginPhone] = useState('');
-  const [showLoginPassword, setShowLoginPassword] = useState(false);
-
-  // Signup State
-  const [signupName, setSignupName] = useState('');
-  const [signupEmail, setSignupEmail] = useState('');
-  const [signupPhone, setSignupPhone] = useState('');
-  const [signupPassword, setSignupPassword] = useState('');
-  const [showSignupPassword, setShowSignupPassword] = useState(false);
-
-  // OTP State (for Citizen)
-  const [otpSent, setOtpSent] = useState(false);
-  const [otp, setOtp] = useState('');
-
   const router = useRouter();
   const containerRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -189,13 +169,7 @@ export default function AnimatedAuth({
     gsap.fromTo(
       containerRef.current,
       { autoAlpha: 0, y: 40, scale: 0.98 },
-      {
-        autoAlpha: 1,
-        y: 0,
-        scale: 1,
-        duration: 0.8,
-        ease: 'power3.out',
-      }
+      { autoAlpha: 1, y: 0, scale: 1, duration: 0.8, ease: 'power3.out' }
     );
   }, { scope: containerRef });
 
@@ -204,10 +178,7 @@ export default function AnimatedAuth({
 
     if (isLogin) {
       tl.to(overlayTintRef.current, { autoAlpha: 1, duration: 0.25, ease: 'power1.out' }, 0)
-      tl.to(overlayRef.current, {
-        left: '45%',
-        clipPath: 'polygon(20% 0%, 100% 0%, 100% 100%, 0% 100%)',
-      }, 0)
+        .to(overlayRef.current, { left: '45%', clipPath: 'polygon(20% 0%, 100% 0%, 100% 100%, 0% 100%)' }, 0)
         .to(overlayTintRef.current, { autoAlpha: 0, duration: 0.35, ease: 'power1.in' }, 0.55)
         .to(overlayLeftTextRef.current, { autoAlpha: 0, x: -50 }, 0)
         .to(overlayRightTextRef.current, { autoAlpha: 1, x: 0 }, 0.2)
@@ -217,10 +188,7 @@ export default function AnimatedAuth({
         .to(loginFormRef.current, { autoAlpha: 1, x: 0 }, 0.2);
     } else {
       tl.to(overlayTintRef.current, { autoAlpha: 1, duration: 0.25, ease: 'power1.out' }, 0)
-      tl.to(overlayRef.current, {
-        left: '0%',
-        clipPath: 'polygon(0% 0%, 100% 0%, 80% 100%, 0% 100%)',
-      }, 0)
+        .to(overlayRef.current, { left: '0%', clipPath: 'polygon(0% 0%, 100% 0%, 80% 100%, 0% 100%)' }, 0)
         .to(overlayTintRef.current, { autoAlpha: 0, duration: 0.35, ease: 'power1.in' }, 0.55)
         .to(overlayRightTextRef.current, { autoAlpha: 0, x: 50 }, 0)
         .to(overlayLeftTextRef.current, { autoAlpha: 1, x: 0 }, 0.2)
@@ -229,123 +197,106 @@ export default function AnimatedAuth({
         .to(loginFormRef.current, { autoAlpha: 0, x: -50 }, 0)
         .to(signupFormRef.current, { autoAlpha: 1, x: 0 }, 0.2);
     }
-    
-    // Reset OTP state when switching forms
-    setOtpSent(false);
-    setOtp('');
-    setError(null);
-    setMessage('');
   }, { dependencies: [isLogin], scope: containerRef });
 
-  const handleSendOtp = async (phone: string, isSignup = false) => {
-    if (!phone) {
-      setError('Phone number is required');
+  const handleSignup = async () => {
+    if (!signupEmail || !signupPassword) {
+      setError('Email and password are required.');
       return;
     }
+
     setError('');
     setMessage('');
     setLoading(true);
 
-    const { error: otpError } = await citizenSignupWithPhone(phone, signupName || 'Citizen');
+    const { data, error: signupError } = await supabase.auth.signUp({
+      email: signupEmail.trim(),
+      password: signupPassword,
+      options: {
+        data: {
+          role: signupRole,
+          full_name: signupName.trim() || null,
+        },
+      },
+    });
 
     setLoading(false);
-    if (otpError) {
-      setError(otpError.message);
-    } else {
-      setOtpSent(true);
-      setMessage('OTP sent! Please check your messages.');
-    }
-  };
 
-  const handleVerifyOtp = async (phone: string) => {
-    if (!otp) {
-      setError('Please enter the OTP');
+    if (signupError) {
+      setError(signupError.message);
       return;
     }
-    setError('');
-    setMessage('');
-    setLoading(true);
 
-    const { error: verifyError } = await verifyCitizenOtp(phone, otp);
+    // Supabase returns identities=[] when email already exists
+    if (data.user && data.user.identities?.length === 0) {
+      setError('An account with this email already exists. Please login.');
+      return;
+    }
 
-    setLoading(false);
-    if (verifyError) {
-      setError(verifyError.message);
+    // Email confirmation ON → no session yet
+    if (!data.session) {
+      setMessage('Account created! Check your email to confirm, then login.');
+      setIsLogin(true);
+      return;
+    }
+
+    // Email confirmation OFF → redirect immediately
+    const userRole = data.user?.user_metadata?.role ?? 'citizen';
+    if (userRole === 'lawyer') {
+      router.push('/portal/dashboard');
     } else {
-      router.push('/citizen');
+      router.push('/citizen/home');
     }
   };
 
   const handleLogin = async () => {
     setError('');
     setMessage('');
+    setLoading(true);
 
-    if (authRole === 'citizen') {
-      if (!otpSent) {
-        handleSendOtp(loginPhone, false);
+    const { data, error: loginError } = await supabase.auth.signInWithPassword({
+      email: loginEmail.trim(),
+      password: loginPassword,
+    });
+
+    if (loginError) {
+      if (loginError.message.toLowerCase().includes('email not confirmed')) {
+        setError('Please confirm your email before logging in. Check your inbox.');
       } else {
-        handleVerifyOtp(loginPhone);
-      }
-      return;
-    }
-
-    if (authRole === 'lawyer') {
-      if (!loginEmail || !loginPassword) {
-        setError('Email and password are required.');
-        return;
-      }
-      setLoading(true);
-      const { data, error: loginError } = await lawyerSignin(loginEmail.trim(), loginPassword);
-
-      if (loginError) {
         setError(loginError.message);
-        setLoading(false);
-        return;
       }
       setLoading(false);
-      router.push('/lawyer');
-    }
-  };
-
-  const handleSignup = async () => {
-    setError('');
-    setMessage('');
-
-    if (authRole === 'citizen') {
-      if (!signupPhone || !signupName) {
-        setError('Full name and phone are required.');
-        return;
-      }
-      if (!otpSent) {
-        handleSendOtp(signupPhone, true);
-      } else {
-        handleVerifyOtp(signupPhone);
-      }
       return;
     }
 
-    if (authRole === 'lawyer') {
-      if (!signupEmail || !signupPassword || !signupName) {
-        setError('Name, email, and password are required.');
-        return;
-      }
-      setLoading(true);
-
-      const { data, error: signupError } = await lawyerSignup(
-        signupEmail.trim(),
-        signupPassword,
-        signupName
-      );
-
+    const userId = data.user?.id;
+    if (!userId) {
+      setError('Login failed. Please try again.');
       setLoading(false);
-      
-      if (signupError) {
-        setError(signupError.message);
-        return;
-      }
+      return;
+    }
 
-      setMessage('Account created! Please check your email to verify.');
-      setIsLogin(true);
+    const { data: roleData, error: roleError } = await supabase
+      .from('user_roles')
+      .select('role')
+      .eq('id', userId)
+      .single();
+
+    if (roleError || !roleData) {
+      setError('Could not verify role. Please try again.');
+      await supabase.auth.signOut();
+      setLoading(false);
+      return;
+    }
+
+    setLoading(false);
+
+    if (roleData.role === 'lawyer') {
+      router.push('/portal/dashboard');
+    } else if (roleData.role === 'admin') {
+      router.push('/admin/dashboard');
+    } else {
+      router.push('/citizen/home');
     }
   };
 
@@ -354,7 +305,16 @@ export default function AnimatedAuth({
     setMessage('');
     setLoading(true);
 
-    const { error: googleError } = await signInWithGoogle(authRole);
+    const { error: googleError } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: `${window.location.origin}/auth/callback${!isLogin ? `?role=${signupRole}` : ''}`,
+        queryParams: {
+          access_type: 'offline',
+          prompt: 'consent',
+        },
+      },
+    });
 
     if (googleError) {
       setError(googleError.message);
@@ -362,11 +322,7 @@ export default function AnimatedAuth({
     }
   };
 
-  const handleForgotPasswordAction = async () => {
-    if (authRole === 'citizen') {
-      setError('Password reset is not applicable for Citizens (OTP based).');
-      return;
-    }
+  const handleForgotPassword = async () => {
     if (!loginEmail.trim()) {
       setError('Please enter your email address first.');
       return;
@@ -375,7 +331,10 @@ export default function AnimatedAuth({
     setMessage('');
     setLoading(true);
 
-    const { error: resetError } = await forgotPassword(loginEmail.trim());
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(
+      loginEmail.trim(),
+      { redirectTo: `${window.location.origin}/auth/callback` }
+    );
 
     setLoading(false);
     if (resetError) {
@@ -392,7 +351,7 @@ export default function AnimatedAuth({
     >
       <div
         ref={containerRef}
-        className="relative w-full max-w-4xl h-[650px] md:h-[550px] rounded-xl overflow-hidden flex"
+        className="relative w-full max-w-4xl h-[600px] md:h-[500px] rounded-xl overflow-hidden flex"
         style={{
           backgroundColor: activeBackgroundColor,
           boxShadow: `0 0 20px ${activeGlowColor}, inset 0 0 0 1px ${activeThemeColor}40`,
@@ -403,7 +362,7 @@ export default function AnimatedAuth({
         } as React.CSSProperties}
       >
         {(error || message) && (
-          <div className="absolute left-1/2 top-4 z-30 -translate-x-1/2 px-4 py-2 text-sm rounded-lg border border-white/20 bg-black/80 text-white shadow-xl max-w-[90%] text-center">
+          <div className="absolute left-1/2 top-4 z-30 -translate-x-1/2 px-4 py-2 text-sm rounded-lg border border-white/20 bg-black/70 text-white whitespace-nowrap">
             {error || message}
           </div>
         )}
@@ -411,133 +370,91 @@ export default function AnimatedAuth({
         {/* === LOGIN FORM (Left Side) === */}
         <div
           ref={loginFormRef}
-          className="absolute left-0 top-0 w-full md:w-1/2 h-full flex flex-col justify-center px-8 md:px-12 opacity-0 -translate-x-12 pointer-events-auto z-10 overflow-y-auto"
+          className="absolute left-0 top-0 w-full md:w-1/2 h-full flex flex-col justify-center px-8 md:px-12 opacity-0 -translate-x-12 pointer-events-auto z-10"
         >
-          <h2 className="text-3xl font-bold text-[var(--auth-text)] mb-6">{loginTitle}</h2>
-          
-          {/* Role Selector */}
-          <div className="flex bg-black/5 rounded-full p-1 mb-6 border border-[var(--auth-border)]">
-            <button
-              onClick={() => { setAuthRole('citizen'); setOtpSent(false); setError(null); }}
-              className={`flex-1 py-1.5 text-xs font-medium rounded-full transition-all ${authRole === 'citizen' ? 'bg-white shadow-sm text-black' : 'text-[var(--auth-text-secondary)] hover:text-[var(--auth-text)]'}`}
-            >
-              Citizen
-            </button>
-            <button
-              onClick={() => { setAuthRole('lawyer'); setOtpSent(false); setError(null); }}
-              className={`flex-1 py-1.5 text-xs font-medium rounded-full transition-all ${authRole === 'lawyer' ? 'bg-white shadow-sm text-black' : 'text-[var(--auth-text-secondary)] hover:text-[var(--auth-text)]'}`}
-            >
-              Lawyer
-            </button>
+          <h2 className="text-3xl font-bold text-[var(--auth-text)] mb-8">{loginTitle}</h2>
+          <div className="space-y-4">
+            <div className="relative border-b border-[var(--auth-border)] pb-2">
+              <input
+                type="email"
+                placeholder="Email"
+                value={loginEmail}
+                onChange={(e) => setLoginEmail(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+                className="w-full bg-transparent outline-none text-[var(--auth-text)] text-sm placeholder-[var(--auth-placeholder)]"
+              />
+              <span className="absolute right-0 text-[var(--auth-text-secondary)]">
+                <Mail size={16} />
+              </span>
+            </div>
+            <div className="relative border-b border-[var(--auth-border)] pb-2">
+              <input
+                type={showLoginPassword ? 'text' : 'password'}
+                placeholder="Password"
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+                className="w-full bg-transparent outline-none text-[var(--auth-text)] text-sm placeholder-[var(--auth-placeholder)]"
+              />
+              <button
+                type="button"
+                onClick={() => setShowLoginPassword((prev) => !prev)}
+                className="absolute right-0 text-xs text-[var(--auth-text-secondary)] hover:text-[var(--auth-text)]"
+              >
+                {showLoginPassword ? 'Hide' : 'Show'}
+              </button>
+            </div>
+            <div className="flex justify-end mt-1">
+              <button
+                type="button"
+                onClick={handleForgotPassword}
+                className="relative text-xs transition-colors"
+                style={{ color: activeThemeColor }}
+                onMouseEnter={(e) => {
+                  const underline = e.currentTarget.querySelector('.forgot-underline');
+                  if (underline) gsap.to(underline, { scaleX: 1, duration: 0.3, ease: 'power2.out' });
+                }}
+                onMouseLeave={(e) => {
+                  const underline = e.currentTarget.querySelector('.forgot-underline');
+                  if (underline) gsap.to(underline, { scaleX: 0, duration: 0.3, ease: 'power2.in' });
+                }}
+              >
+                Forgot Password?
+                <span
+                  className="forgot-underline absolute left-0 bottom-0 w-full h-[1px] origin-left"
+                  style={{ backgroundColor: activeThemeColor, transform: 'scaleX(0)' }}
+                />
+              </button>
+            </div>
           </div>
 
-          <div className="space-y-4">
-            {authRole === 'citizen' ? (
-              <>
-                <div className="relative border-b border-[var(--auth-border)] pb-2 transition-all">
-                  <input
-                    type="tel"
-                    placeholder="Phone Number (e.g. +1234567890)"
-                    value={loginPhone}
-                    onChange={(e) => setLoginPhone(e.target.value)}
-                    disabled={otpSent}
-                    className="w-full bg-transparent outline-none text-[var(--auth-text)] text-sm placeholder-[var(--auth-placeholder)] disabled:opacity-50"
-                  />
-                  <span className="absolute right-0 text-[var(--auth-text-secondary)]">
-                    <Phone size={16} />
-                  </span>
-                </div>
-                {otpSent && (
-                  <div className="relative border-b border-[var(--auth-border)] pb-2 transition-all">
-                    <input
-                      type="text"
-                      placeholder="Enter OTP"
-                      value={otp}
-                      onChange={(e) => setOtp(e.target.value)}
-                      className="w-full bg-transparent outline-none text-[var(--auth-text)] text-sm placeholder-[var(--auth-placeholder)]"
-                    />
-                    <span className="absolute right-0 text-[var(--auth-text-secondary)]">
-                      <ShieldCheck size={16} />
-                    </span>
-                  </div>
-                )}
-              </>
-            ) : (
-              <>
-                <div className="relative border-b border-[var(--auth-border)] pb-2 transition-all">
-                  <input
-                    type="email"
-                    placeholder="Lawyer Email"
-                    value={loginEmail}
-                    onChange={(e) => setLoginEmail(e.target.value)}
-                    className="w-full bg-transparent outline-none text-[var(--auth-text)] text-sm placeholder-[var(--auth-placeholder)]"
-                  />
-                  <span className="absolute right-0 text-[var(--auth-text-secondary)]">
-                    <Mail size={16} />
-                  </span>
-                </div>
-                <div className="relative border-b border-[var(--auth-border)] pb-2 transition-all">
-                  <input
-                    type={showLoginPassword ? 'text' : 'password'}
-                    placeholder="Password"
-                    value={loginPassword}
-                    onChange={(e) => setLoginPassword(e.target.value)}
-                    className="w-full bg-transparent outline-none text-[var(--auth-text)] text-sm placeholder-[var(--auth-placeholder)]"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowLoginPassword((prev) => !prev)}
-                    className="absolute right-0 text-xs text-[var(--auth-text-secondary)] hover:text-[var(--auth-text)]"
-                  >
-                    {showLoginPassword ? 'Hide' : 'Show'}
-                  </button>
-                </div>
-                <div className="flex justify-end mt-1">
-                  <button
-                    type="button"
-                    onClick={handleForgotPasswordAction}
-                    className="relative text-xs transition-colors"
-                    style={{ color: activeThemeColor }}
-                  >
-                    Forgot Password?
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-          
           <button
             onClick={handleLogin}
             disabled={loading}
-            className="w-full mt-6 py-3 rounded-full text-white font-semibold transition-transform hover:scale-105"
+            className="w-full mt-6 py-3 rounded-full text-white font-semibold transition-transform hover:scale-105 disabled:opacity-60 disabled:cursor-not-allowed"
             style={{ backgroundColor: activeThemeColor }}
           >
-            {loading ? 'Please wait...' : (authRole === 'citizen' ? (otpSent ? 'Verify OTP' : 'Send OTP') : loginTitle)}
+            {loading ? 'Please wait...' : loginTitle}
           </button>
-          
           <button
             type="button"
             onClick={handleGoogleAuth}
             disabled={loading}
-            className="w-full mt-3 py-3 rounded-full text-[var(--auth-text)] text-sm font-semibold border bg-transparent transition-transform transition-colors hover:scale-105 hover:bg-black/5 flex items-center justify-center space-x-2"
+            className="w-full mt-3 py-3 rounded-full text-[var(--auth-text)] text-sm font-semibold border bg-transparent transition-transform transition-colors hover:scale-105 hover:bg-white/10 flex items-center justify-center space-x-2 disabled:opacity-60 disabled:cursor-not-allowed"
             style={{ borderColor: activeThemeColor }}
           >
             {loading ? (
               'Please wait...'
             ) : (
               <>
-                <img
-                  src="/Googe_icon.svg"
-                  alt="Google logo"
-                  className="h-5 w-5"
-                />
+                <img src="/Googe_icon.svg" alt="Google logo" className="h-5 w-5" />
                 <span>Login via Google</span>
               </>
             )}
           </button>
-          <p className="text-xs text-[var(--auth-text-secondary)] mt-6 text-center">
+          <p className="text-xs text-[var(--auth-text-secondary)] mt-4 text-center">
             Don&apos;t have an account?{' '}
-            <button onClick={() => {setIsLogin(false); setOtpSent(false);}} style={{ color: activeThemeColor }} className="hover:underline font-semibold">
+            <button onClick={() => setIsLogin(false)} style={{ color: activeThemeColor }} className="hover:underline">
               Sign Up
             </button>
           </p>
@@ -546,137 +463,95 @@ export default function AnimatedAuth({
         {/* === SIGN UP FORM (Right Side) === */}
         <div
           ref={signupFormRef}
-          className="absolute right-0 top-0 w-full md:w-1/2 h-full flex flex-col justify-start px-8 md:px-12 pointer-events-auto z-10 overflow-y-auto pb-8 pt-6"
+          className="absolute right-0 top-0 w-full md:w-1/2 h-full flex flex-col justify-start px-8 md:px-12 pointer-events-auto z-10 overflow-y-auto md:overflow-hidden pt-6"
         >
           <h2 className="text-2xl font-bold text-[var(--auth-text)] mb-4">{signupTitle}</h2>
-          
-          {/* Role Selector */}
-          <div className="flex bg-black/5 rounded-full p-1 mb-5 border border-[var(--auth-border)] shrink-0">
-            <button
-              onClick={() => { setAuthRole('citizen'); setOtpSent(false); setError(null); }}
-              className={`flex-1 py-1.5 text-xs font-medium rounded-full transition-all ${authRole === 'citizen' ? 'bg-white shadow-sm text-black' : 'text-[var(--auth-text-secondary)] hover:text-[var(--auth-text)]'}`}
-            >
-              Citizen
-            </button>
-            <button
-              onClick={() => { setAuthRole('lawyer'); setOtpSent(false); setError(null); }}
-              className={`flex-1 py-1.5 text-xs font-medium rounded-full transition-all ${authRole === 'lawyer' ? 'bg-white shadow-sm text-black' : 'text-[var(--auth-text-secondary)] hover:text-[var(--auth-text)]'}`}
-            >
-              Lawyer
-            </button>
-          </div>
-
-          <div className="space-y-3.5">
-            <div className="relative border-b border-[var(--auth-border)] pb-1.5">
+          <div className="space-y-2.5">
+            <div className="relative border-b border-[var(--auth-border)] pb-2">
               <input
                 type="text"
                 placeholder="Full name"
                 value={signupName}
                 onChange={(e) => setSignupName(e.target.value)}
-                disabled={otpSent && authRole === 'citizen'}
-                className="w-full bg-transparent outline-none text-[var(--auth-text)] text-xs placeholder-[var(--auth-placeholder)] disabled:opacity-50"
+                className="w-full bg-transparent outline-none text-[var(--auth-text)] text-xs placeholder-[var(--auth-placeholder)]"
               />
-              <span className="absolute right-0 top-0 text-[var(--auth-text-secondary)]">
-                <User size={14} />
+              <span className="absolute right-0 text-[var(--auth-text-secondary)]">
+                <User size={16} />
               </span>
             </div>
-
-            {authRole === 'citizen' ? (
-              <>
-                <div className="relative border-b border-[var(--auth-border)] pb-1.5">
-                  <input
-                    type="tel"
-                    placeholder="Phone (e.g. +1234567890)"
-                    value={signupPhone}
-                    onChange={(e) => setSignupPhone(e.target.value)}
-                    disabled={otpSent}
-                    className="w-full bg-transparent outline-none text-[var(--auth-text)] text-xs placeholder-[var(--auth-placeholder)] disabled:opacity-50"
-                  />
-                  <span className="absolute right-0 top-0 text-[var(--auth-text-secondary)]">
-                    <Phone size={14} />
-                  </span>
-                </div>
-                {otpSent && (
-                  <div className="relative border-b border-[var(--auth-border)] pb-1.5">
+            <div className="relative border-b border-[var(--auth-border)] pb-2">
+              <input
+                type="email"
+                placeholder="Email"
+                value={signupEmail}
+                onChange={(e) => setSignupEmail(e.target.value)}
+                className="w-full bg-transparent outline-none text-[var(--auth-text)] text-xs placeholder-[var(--auth-placeholder)]"
+              />
+              <span className="absolute right-0 text-[var(--auth-text-secondary)]">
+                <Mail size={16} />
+              </span>
+            </div>
+            <div className="relative border-b border-[var(--auth-border)] pb-2">
+              <input
+                type={showSignupPassword ? 'text' : 'password'}
+                placeholder="Password"
+                value={signupPassword}
+                onChange={(e) => setSignupPassword(e.target.value)}
+                className="w-full bg-transparent outline-none text-[var(--auth-text)] text-xs placeholder-[var(--auth-placeholder)]"
+              />
+              <button
+                type="button"
+                onClick={() => setShowSignupPassword((prev) => !prev)}
+                className="absolute right-0 text-xs text-[var(--auth-text-secondary)] hover:text-[var(--auth-text)]"
+              >
+                {showSignupPassword ? 'Hide' : 'Show'}
+              </button>
+            </div>
+            <div>
+              <p className="text-[11px] mb-1.5" style={{ color: activePlaceholderColor }}>Role</p>
+              <div className="flex flex-wrap gap-3">
+                {roles.map((role) => (
+                  <label key={role} className="text-[11px] capitalize flex items-center gap-1.5 cursor-pointer" style={{ color: activePlaceholderColor }}>
                     <input
-                      type="text"
-                      placeholder="Enter OTP"
-                      value={otp}
-                      onChange={(e) => setOtp(e.target.value)}
-                      className="w-full bg-transparent outline-none text-[var(--auth-text)] text-xs placeholder-[var(--auth-placeholder)]"
+                      type="radio"
+                      name="signup-role"
+                      value={role}
+                      checked={signupRole === role}
+                      onChange={() => setSignupRole(role)}
                     />
-                    <span className="absolute right-0 top-0 text-[var(--auth-text-secondary)]">
-                      <ShieldCheck size={14} />
-                    </span>
-                  </div>
-                )}
-              </>
-            ) : (
-              <>
-                <div className="relative border-b border-[var(--auth-border)] pb-1.5">
-                  <input
-                    type="email"
-                    placeholder="Lawyer Email"
-                    value={signupEmail}
-                    onChange={(e) => setSignupEmail(e.target.value)}
-                    className="w-full bg-transparent outline-none text-[var(--auth-text)] text-xs placeholder-[var(--auth-placeholder)]"
-                  />
-                  <span className="absolute right-0 top-0 text-[var(--auth-text-secondary)]">
-                    <Mail size={14} />
-                  </span>
-                </div>
-                <div className="relative border-b border-[var(--auth-border)] pb-1.5">
-                  <input
-                    type={showSignupPassword ? 'text' : 'password'}
-                    placeholder="Password"
-                    value={signupPassword}
-                    onChange={(e) => setSignupPassword(e.target.value)}
-                    className="w-full bg-transparent outline-none text-[var(--auth-text)] text-xs placeholder-[var(--auth-placeholder)]"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowSignupPassword((prev) => !prev)}
-                    className="absolute right-0 top-0 text-[10px] text-[var(--auth-text-secondary)] hover:text-[var(--auth-text)]"
-                  >
-                    {showSignupPassword ? 'Hide' : 'Show'}
-                  </button>
-                </div>
-              </>
-            )}
+                    {role}
+                  </label>
+                ))}
+              </div>
+            </div>
           </div>
-
           <button
             onClick={handleSignup}
             disabled={loading}
-            className="w-full mt-5 py-2.5 rounded-full text-white text-sm font-semibold transition-transform hover:scale-105"
+            className="w-full mt-4 py-2.5 rounded-full text-white text-sm font-semibold transition-transform hover:scale-105 disabled:opacity-60 disabled:cursor-not-allowed"
             style={{ backgroundColor: activeThemeColor }}
           >
-            {loading ? 'Please wait...' : (authRole === 'citizen' ? (otpSent ? 'Verify OTP' : 'Send OTP') : signupTitle)}
+            {loading ? 'Please wait...' : signupTitle}
           </button>
-          
           <button
             type="button"
             onClick={handleGoogleAuth}
             disabled={loading}
-            className="w-full mt-3 py-2.5 rounded-full text-[var(--auth-text)] text-sm font-semibold border bg-transparent transition-transform transition-colors hover:scale-105 hover:bg-black/5 flex items-center justify-center space-x-2"
+            className="w-full mt-3 py-2.5 rounded-full text-[var(--auth-text)] text-sm font-semibold border bg-transparent transition-transform transition-colors hover:scale-105 hover:bg-white/10 flex items-center justify-center space-x-2 disabled:opacity-60 disabled:cursor-not-allowed"
             style={{ borderColor: activeThemeColor }}
           >
             {loading ? (
               'Please wait...'
             ) : (
               <>
-                <img
-                  src="/Googe_icon.svg"
-                  alt="Google logo"
-                  className="h-4 w-4"
-                />
+                <img src="/Googe_icon.svg" alt="Google logo" className="h-4 w-4" />
                 <span>Signup via Google</span>
               </>
             )}
           </button>
-          <p className="text-[11px] text-[var(--auth-text-secondary)] mt-5 text-center shrink-0">
+          <p className="text-[11px] text-[var(--auth-text-secondary)] mt-3 text-center">
             Already have an account?{' '}
-            <button onClick={() => {setIsLogin(true); setOtpSent(false);}} style={{ color: activeThemeColor }} className="hover:underline font-semibold">
+            <button onClick={() => setIsLogin(true)} style={{ color: activeThemeColor }} className="hover:underline">
               Login
             </button>
           </p>
@@ -687,7 +562,6 @@ export default function AnimatedAuth({
           ref={overlayRef}
           className="absolute top-0 h-full w-[55%] z-20 hidden md:flex overflow-hidden shadow-2xl"
           style={{
-            // Initial state: Covering left side (Sign Up mode)
             left: '0%',
             clipPath: 'polygon(0% 0%, 100% 0%, 80% 100%, 0% 100%)',
           }}
@@ -707,41 +581,25 @@ export default function AnimatedAuth({
             className="absolute inset-0 opacity-0 z-10"
             style={{ backgroundColor: activeTransitionTintColor }}
           />
-
-          {/* Overlay Content Left (Visible when overlay is on the left) */}
           <div
             ref={overlayLeftTextRef}
-            className="absolute inset-0 z-20 flex flex-col justify-between pt-8 pb-8 items-start px-12 w-[calc(100%/0.55*0.5)]"
+            className="absolute inset-0 z-20 flex flex-col justify-between pt-6 pb-6 items-start px-12 w-[calc(100%/0.55*0.5)]"
           >
-            <h1
-              className="text-4xl font-bold leading-tight"
-              style={{ color: leftPanelTitleColor }}
-            >
+            <h1 className="text-4xl font-bold leading-tight" style={{ color: leftPanelTitleColor }}>
               {leftPanelTitle}
             </h1>
-            <p
-              className="text-sm max-w-[260px] leading-relaxed mt-3"
-              style={{ color: leftPanelSubtitleColor }}
-            >
+            <p className="text-sm max-w-[260px] leading-relaxed mt-3" style={{ color: leftPanelSubtitleColor }}>
               {leftPanelSubtitle}
             </p>
           </div>
-
-          {/* Overlay Content Right (Visible when overlay is on the right) */}
           <div
             ref={overlayRightTextRef}
-            className="absolute right-0 inset-y-0 z-20 flex flex-col justify-between pt-8 pb-8 items-end px-12 w-[calc(100%/0.55*0.5)] text-right opacity-0"
+            className="absolute right-0 inset-y-0 z-20 flex flex-col justify-between pt-6 pb-6 items-end px-12 w-[calc(100%/0.55*0.5)] text-right opacity-0"
           >
-            <h1
-              className="text-4xl font-bold leading-tight"
-              style={{ color: rightPanelTitleColor }}
-            >
+            <h1 className="text-4xl font-bold leading-tight" style={{ color: rightPanelTitleColor }}>
               {rightPanelTitle}
             </h1>
-            <p
-              className="text-sm max-w-[260px] leading-relaxed mt-3"
-              style={{ color: rightPanelSubtitleColor }}
-            >
+            <p className="text-sm max-w-[260px] leading-relaxed mt-3" style={{ color: rightPanelSubtitleColor }}>
               {rightPanelSubtitle}
             </p>
           </div>
