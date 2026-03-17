@@ -3,7 +3,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import gsap from 'gsap';
-import { Menu, Home, Compass, Gavel, Store, HelpCircle, Sun, Moon } from 'lucide-react';
+import { Menu, Home, Compass, Gavel, Store, HelpCircle, Sun, Moon, type LucideIcon } from 'lucide-react';
 import { useTheme } from './themeprovider'; // Adjust path to your ThemeProvider
 
 // ==========================================
@@ -12,7 +12,7 @@ import { useTheme } from './themeprovider'; // Adjust path to your ThemeProvider
 
 export interface NavItem {
   id: string;
-  icon: React.ComponentType<any>;
+  icon: LucideIcon;
   label?: string;
   href?: string;
   onClick?: () => void;
@@ -34,7 +34,7 @@ export interface SidebarProps {
   /** Configuration for the bottom/end of the sidebar */
   showThemeToggle?: boolean;
   showHelpIcon?: boolean;
-  helpIcon?: React.ComponentType<any>;
+  helpIcon?: LucideIcon;
   onHelpClick?: () => void;
 
   /** Theme & Color Overrides */

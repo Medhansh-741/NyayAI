@@ -163,7 +163,7 @@ export default function LegalRightsExplorer() {
   }, { scope: containerRef });
 
   return (
-    <div className="flex bg-[#111e3c] font-sans h-screen overflow-hidden" ref={containerRef}>
+    <div className="flex bg-gray-50 dark:bg-[#0f1e3f] font-sans h-screen overflow-hidden text-gray-900 dark:text-white transition-colors duration-300" ref={containerRef}>
       {/* Sidebar Navigation */}
       <div className="shrink-0 h-screen z-50 md:sticky md:top-0 shadow-[4px_0_24px_rgba(0,0,0,0.05)] dark:shadow-none bg-white dark:bg-[#0a152e]">
         <Sidebar />
@@ -172,33 +172,33 @@ export default function LegalRightsExplorer() {
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col relative h-full w-full overflow-y-auto custom-scrollbar">
         {/* Abstract Background Elements */}
-        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-white/[0.02] rounded-full blur-[100px] pointer-events-none"></div>
-        <div className="absolute bottom-0 right-0 w-[300px] h-[300px] bg-[#cdaa80]/[0.05] rounded-full blur-[80px] pointer-events-none"></div>
+        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-[#997953]/[0.08] dark:bg-white/[0.02] rounded-full blur-[100px] pointer-events-none"></div>
+        <div className="absolute bottom-0 right-0 w-[300px] h-[300px] bg-[#997953]/[0.12] dark:bg-[#cdaa80]/[0.05] rounded-full blur-[80px] pointer-events-none"></div>
 
         <div className="w-full max-w-[1400px] mx-auto px-6 py-10 md:py-12 z-10 flex flex-col flex-1">
           
           {/* Title - Add pt-8 to give space for header if needed */}
-          <h1 ref={titleRef} className="pt-4 md:pt-8 text-3xl md:text-4xl lg:text-[46px] font-serif font-bold text-[#e1c18a] text-center mb-10 tracking-widest drop-shadow-md">
+          <h1 ref={titleRef} className="pt-4 md:pt-8 text-3xl md:text-4xl lg:text-[46px] font-serif font-bold text-[#997953] dark:text-[#cdaa80] text-center mb-10 tracking-widest drop-shadow-md">
             LEGAL RIGHTS EXPLORER
           </h1>
 
         {/* Search Bar */}
         <div ref={searchBarRef} className="relative w-full max-w-5xl mx-auto mb-12 group">
-          <div className="absolute inset-0 bg-gradient-to-r from-[#e1c18a]/20 to-[#e1c18a]/5 rounded-full blur-sm group-hover:blur-md transition-all duration-300"></div>
-          <div className="relative flex items-center bg-[#111e3c] border border-[#e1c18a]/40 rounded-full overflow-hidden transition-all duration-300 focus-within:border-[#e1c18a] focus-within:ring-1 focus-within:ring-[#e1c18a]/50">
+          <div className="absolute inset-0 bg-gradient-to-r from-[#997953]/20 to-[#997953]/5 dark:from-[#cdaa80]/20 dark:to-[#cdaa80]/5 rounded-full blur-sm group-hover:blur-md transition-all duration-300"></div>
+          <div className="relative flex items-center bg-white dark:bg-[#0f1e3f] border border-[#d8c1a1] dark:border-[#cdaa80]/40 rounded-full overflow-hidden transition-all duration-300 focus-within:border-[#997953] dark:focus-within:border-[#cdaa80] focus-within:ring-1 focus-within:ring-[#997953]/40 dark:focus-within:ring-[#cdaa80]/50">
             <input 
               type="text" 
               placeholder="Search by keyword (e.g., Eviction), Section (e.g., BNS 103), or legal issue..."
-              className="flex-1 bg-transparent px-6 py-3 md:py-4 text-white placeholder-white/50 outline-none text-[15px] md:text-base w-full"
+              className="flex-1 bg-transparent px-6 py-3 md:py-4 text-[#443831] dark:text-white placeholder-[#443831]/40 dark:placeholder-white/50 outline-none text-[15px] md:text-base w-full"
             />
             
             {/* Language Toggles */}
-            <div className="flex items-center px-4 gap-3 bg-[#e1c18a]/10 h-full py-3 md:py-4 border-l border-[#e1c18a]/20">
+            <div className="flex items-center px-4 gap-3 bg-[#997953]/10 dark:bg-[#cdaa80]/10 h-full py-3 md:py-4 border-l border-[#997953]/20 dark:border-[#cdaa80]/20">
               {['ENGLISH', 'हिन्दी', 'HINGLISH'].map((lang) => (
                 <button 
                   key={lang}
                   onClick={() => setActiveLang(lang)}
-                  className={`text-[11px] md:text-sm font-medium tracking-wide transition-colors ${activeLang === lang ? 'text-[#e1c18a]' : 'text-white/60 hover:text-white/90'}`}
+                  className={`text-[11px] md:text-sm font-medium tracking-wide transition-colors ${activeLang === lang ? 'text-[#997953] dark:text-[#cdaa80]' : 'text-[#443831]/60 hover:text-[#443831]/90 dark:text-white/60 dark:hover:text-white/90'}`}
                 >
                   {lang}
                 </button>
@@ -209,7 +209,7 @@ export default function LegalRightsExplorer() {
 
         {/* Browse by Domains */}
         <div className="w-full mb-10">
-          <h2 ref={domainsHeaderRef} className="text-white text-[15px] md:text-[17px] font-semibold tracking-wide mb-5 uppercase flex items-center gap-2">
+          <h2 ref={domainsHeaderRef} className="text-[#5b4b3d] dark:text-[#cdaa80] text-[15px] md:text-[17px] font-semibold tracking-wide mb-5 uppercase flex items-center gap-2">
             BROWSE BY LEGAL DOMAINS
           </h2>
           
@@ -217,7 +217,7 @@ export default function LegalRightsExplorer() {
             {domains.map((domain) => (
               <div 
                 key={domain.title} 
-                className="domain-card bg-[#e6ce9e] text-[#0f1e3f] rounded-xl p-5 md:p-6 flex flex-col justify-between items-start cursor-pointer hover:bg-[#ebd5a9] hover:-translate-y-1 hover:shadow-[0_8px_24px_rgba(225,193,138,0.15)] transition-all duration-300 min-h-[160px]"
+                className="domain-card bg-white dark:bg-[#cdaa80] text-[#0f1e3f] rounded-xl p-5 md:p-6 flex flex-col justify-between items-start cursor-pointer border border-[#e3d4bf] dark:border-transparent hover:bg-[#f9f4ec] dark:hover:bg-[#d9b88f] hover:-translate-y-1 hover:shadow-[0_8px_24px_rgba(225,193,138,0.15)] transition-all duration-300 min-h-[160px]"
               >
                 <div className="flex gap-4 items-start w-full">
                   <div className="shrink-0">
@@ -229,7 +229,7 @@ export default function LegalRightsExplorer() {
                   </div>
                 </div>
                 
-                <button className="mt-4 px-4 py-1.5 border border-[#0f1e3f]/40 rounded-full text-[10px] md:text-xs font-bold tracking-widest uppercase hover:bg-[#0f1e3f] hover:text-[#e1c18a] hover:border-[#0f1e3f] transition-colors duration-300">
+                <button className="mt-4 px-4 py-1.5 border border-[#0f1e3f]/40 rounded-full text-[10px] md:text-xs font-bold tracking-widest uppercase hover:bg-[#0f1e3f] hover:text-[#cdaa80] hover:border-[#0f1e3f] transition-colors duration-300">
                   EXPLORE TOPIC
                 </button>
               </div>
@@ -239,7 +239,7 @@ export default function LegalRightsExplorer() {
 
         {/* Featured Topic */}
         <div className="w-full mt-auto pt-6">
-          <h2 ref={featuredHeaderRef} className="text-white text-[15px] md:text-[17px] font-semibold tracking-wide mb-4 uppercase">
+          <h2 ref={featuredHeaderRef} className="text-[#5b4b3d] dark:text-[#cdaa80] text-[15px] md:text-[17px] font-semibold tracking-wide mb-4 uppercase">
             {loadingFeatured 
               ? "LOADING FEATURED TOPIC..." 
               : featuredCase 
@@ -247,17 +247,17 @@ export default function LegalRightsExplorer() {
                 : "FEATURED TOPIC: BNS vs IPC - The 2023 Law Overhaul"}
           </h2>
           
-          <div ref={featuredCardRef} className="bg-[#e6ce9e] rounded-xl p-6 md:p-8 flex flex-col md:flex-row justify-between items-start gap-8 shadow-lg shadow-black/20 hover:shadow-[0_8px_32px_rgba(225,193,138,0.1)] transition-all duration-300 relative overflow-hidden group">
+          <div ref={featuredCardRef} className="bg-white dark:bg-[#cdaa80] rounded-xl p-6 md:p-8 flex flex-col md:flex-row justify-between items-start gap-8 shadow-lg shadow-black/5 dark:shadow-black/20 hover:shadow-[0_8px_32px_rgba(225,193,138,0.1)] transition-all duration-300 relative overflow-hidden group border border-[#e3d4bf] dark:border-transparent">
             {/* Subtle highlight effect */}
-            <div className="absolute inset-0 bg-white/0 group-hover:bg-white/5 transition-colors duration-300 pointer-events-none"></div>
+            <div className="absolute inset-0 bg-[#997953]/0 group-hover:bg-[#997953]/5 dark:bg-white/0 dark:group-hover:bg-white/5 transition-colors duration-300 pointer-events-none"></div>
 
             {loadingFeatured ? (
               <div className="flex-1 w-full animate-pulse flex flex-col gap-4">
-                <div className="h-6 bg-[#111e3c]/10 rounded-full w-32"></div>
-                <div className="h-8 bg-[#111e3c]/10 rounded w-3/4"></div>
+                <div className="h-6 bg-[#0f1e3f]/10 rounded-full w-32"></div>
+                <div className="h-8 bg-[#0f1e3f]/10 rounded w-3/4"></div>
                 <div className="space-y-2 mt-2">
-                  <div className="h-4 bg-[#111e3c]/10 rounded w-full"></div>
-                  <div className="h-4 bg-[#111e3c]/10 rounded w-5/6"></div>
+                  <div className="h-4 bg-[#0f1e3f]/10 rounded w-full"></div>
+                  <div className="h-4 bg-[#0f1e3f]/10 rounded w-5/6"></div>
                 </div>
               </div>
             ) : (
@@ -265,7 +265,7 @@ export default function LegalRightsExplorer() {
                 {/* Left side: Content */}
                 <div className="flex-1 flex flex-col justify-start">
                   <div className="mb-4">
-                    <span className="inline-block bg-[#111e3c] text-[#e6ce9e] text-[10px] md:text-xs font-bold px-3 py-1 rounded-full tracking-widest uppercase shadow-sm">
+                    <span className="inline-block bg-[#0f1e3f] text-[#cdaa80] text-[10px] md:text-xs font-bold px-3 py-1 rounded-full tracking-widest uppercase shadow-sm">
                       {featuredCase ? featuredCase.domain : "CRIMINAL LAW"}
                     </span>
                   </div>
@@ -293,10 +293,10 @@ export default function LegalRightsExplorer() {
                       {featuredCase?.confidence_score ? `${(featuredCase.confidence_score * 100).toFixed(0)}%` : "99%"}
                     </span>
                   </div>
-                  <button className="w-full px-6 py-2.5 border border-[#0f1e3f] rounded-full text-xs md:text-sm font-bold tracking-widest uppercase hover:bg-[#0f1e3f] hover:text-[#e1c18a] transition-all duration-300 shadow-sm">
+                  <button className="w-full px-6 py-2.5 border border-[#0f1e3f] rounded-full text-xs md:text-sm font-bold tracking-widest uppercase hover:bg-[#0f1e3f] hover:text-[#cdaa80] transition-all duration-300 shadow-sm">
                     {featuredCase ? "VIEW FULL BRIEF" : "FIND A LAWYER FOR THIS"}
                   </button>
-                  <button className="w-full px-6 py-2.5 border border-[#0f1e3f] rounded-full text-xs md:text-sm font-bold tracking-widest uppercase hover:bg-[#0f1e3f] hover:text-[#e1c18a] transition-all duration-300 shadow-sm">
+                  <button className="w-full px-6 py-2.5 border border-[#0f1e3f] rounded-full text-xs md:text-sm font-bold tracking-widest uppercase hover:bg-[#0f1e3f] hover:text-[#cdaa80] transition-all duration-300 shadow-sm">
                     {featuredCase ? "MATCH AS LAWYER" : "REQUEST DOCUMENT DRAFT"}
                   </button>
                 </div>
@@ -322,6 +322,15 @@ export default function LegalRightsExplorer() {
         }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover {
           background-color: rgba(225, 193, 138, 0.5);
+        }
+        .dark .custom-scrollbar::-webkit-scrollbar-track {
+          background: #0f1e3f;
+        }
+        .dark .custom-scrollbar::-webkit-scrollbar-thumb {
+          background-color: #213a56;
+        }
+        .dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background-color: rgba(205,170,128,0.5);
         }
       `}} />
     </div>

@@ -18,7 +18,7 @@ type GLTFResult = GLTF & {
   }
 }
 
-export function Model(props: React.JSX.IntrinsicElements['group']) {
+export function Model(props: React.ComponentProps<'group'>) {
   const { nodes, materials } = useGLTF('/ladyjustice-transformed.glb') as unknown as GLTFResult
   return (
     <group {...props} dispose={null}>
