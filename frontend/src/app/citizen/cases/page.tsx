@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import gsap from 'gsap';
 import { useGSAP } from '@gsap/react';
 import { Footer } from '../../../../components/footer';
@@ -79,9 +79,12 @@ export default function CaseHistory() {
   const cardsWrapperRef = useRef<HTMLDivElement | null>(null);
   const searchContainerRef = useRef<HTMLDivElement | null>(null);
   const searchIconRef = useRef<SVGSVGElement | null>(null);
+  const dropdownRef = useRef<HTMLDivElement | null>(null);
+  const dropdownContentRef = useRef<HTMLDivElement | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [clickedCardId, setClickedCardId] = useState<number | null>(null);
   const [sortOption, setSortOption] = useState<'latest' | 'oldest' | 'title_asc' | 'title_desc'>('latest');
+  const [isSortOpen, setIsSortOpen] = useState(false);
   const { theme, mounted } = useTheme();
   const isDark = mounted && theme === 'dark';
 
@@ -117,7 +120,41 @@ export default function CaseHistory() {
 
     return 0;
   });
-  const selectedSortIndex = Math.max(0, sortOptions.findIndex((option) => option.value === sortOption));
+
+  // ── Click outside ──────────────────────────────────────
+  useEffect(() => {
+    function handle(e: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setIsSortOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handle);
+    return () => document.removeEventListener('mousedown', handle);
+  }, []);
+
+  // ── GSAP dropdown ──────────────────────────────────────
+  useEffect(() => {
+    if (!dropdownContentRef.current) return;
+    if (isSortOpen) {
+      gsap.fromTo(
+        dropdownContentRef.current,
+        { opacity: 0, y: -10, scaleY: 0.9, transformOrigin: 'top center' },
+        { opacity: 1, y: 0, scaleY: 1, duration: 0.2, ease: 'power2.out', display: 'block' }
+      );
+    } else {
+      gsap.to(dropdownContentRef.current, {
+        opacity: 0,
+        y: -10,
+        scaleY: 0.9,
+        duration: 0.15,
+        ease: 'power2.in',
+        onComplete: () => {
+          if (dropdownContentRef.current) dropdownContentRef.current.style.display = 'none';
+        }
+      });
+    }
+  }, [isSortOpen]);
+
   // Initial page entrance
   useGSAP(
     () => {
@@ -188,25 +225,43 @@ export default function CaseHistory() {
   };
 
   return (
-    <div ref={pageRef} className="flex min-h-screen bg-gray-50 dark:bg-[#0f1e3f] transition-colors duration-300">
+    <div
+      ref={pageRef}
+      className="flex min-h-screen bg-gray-50 dark:bg-[#0f1e3f] transition-colors duration-300"
+    >
       <div className="md:sticky md:top-0 md:h-screen shrink-0 z-50">
         <Sidebar />
       </div>
       <div className="flex-1 max-w-[1200px] mx-auto p-6 md:p-8 text-gray-900 dark:text-white flex flex-col pb-24 md:pb-8">
-
         {/* Top Header/Nav Area */}
         <div className="cases-top-nav flex border-b border-[#d8c1a1] dark:border-[#213a56] pb-2 mb-6 shrink-0">
           <nav className="flex gap-6 text-sm">
-            <button className="text-[#cdaa80] border-b-2 border-[#cdaa80] pb-2 font-medium">Cases</button>
+            <button className="text-[#cdaa80] border-b-2 border-[#cdaa80] pb-2 font-medium">
+              Cases
+            </button>
           </nav>
         </div>
 
         {/* Search and Filters Area */}
-        <div className="cases-search-sort space-y-4 mb-6 shrink-0">
-          <div ref={searchContainerRef} className="search-shell relative group rounded-full border border-[#d8c1a1] dark:border-[#2b4b6b] bg-white dark:bg-[#12284f]/85 shadow-[0_8px_24px_rgba(68,56,49,0.08)] dark:shadow-[0_8px_24px_rgba(8,18,40,0.28)] overflow-hidden transition-colors duration-300">
+        <div className="cases-search-sort flex flex-col md:flex-row justify-between items-center gap-6 mb-6 shrink-0 font-sans w-full relative z-40">
+          <div
+            ref={searchContainerRef}
+            className="search-shell w-full relative group rounded-full border border-[#d8c1a1] dark:border-[#2b4b6b] bg-white dark:bg-[#12284f]/85 shadow-[0_8px_24px_rgba(68,56,49,0.08)] dark:shadow-[0_8px_24px_rgba(8,18,40,0.28)] overflow-hidden transition-colors duration-300"
+          >
             <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-              <svg ref={searchIconRef} className="h-4 w-4 text-[#443831]/40 dark:text-white/40 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              <svg
+                ref={searchIconRef}
+                className="h-4 w-4 text-[#443831]/40 dark:text-white/40 transition-colors"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                />
               </svg>
             </div>
             <input
@@ -220,45 +275,80 @@ export default function CaseHistory() {
             />
           </div>
 
-          <div className="flex items-center gap-3">
-            <div className="ml-auto w-full md:w-[560px]">
-              <span className="mb-2 block text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-[#cdaa80]/70">
-                Sort Cases
+          {/* Sort Dropdown - Marketplace Style */}
+          <div className="relative z-50 shrink-0" ref={dropdownRef}>
+            <button
+              onClick={() => setIsSortOpen((v) => !v)}
+              className={`flex items-center gap-3 bg-white dark:bg-[#0f1e3f] border border-[#d8c1a1] dark:border-[#cdaa80]/50 text-[#443831] dark:text-[#cdaa80] px-4 py-2.5 rounded-lg transition-colors focus:ring-2 focus:ring-[#997953]/20 dark:focus:ring-[#cdaa80]/30 outline-none shadow-sm w-56 ${
+                isSortOpen
+                  ? 'bg-[#f7efe5] ring-1 ring-[#997953]/30 dark:bg-[#213a56] dark:ring-[#cdaa80]/50'
+                  : 'hover:bg-[#f9f4ec] dark:hover:bg-[#213a56]'
+              }`}
+            >
+              <svg
+                className="w-5 h-5 shrink-0 opacity-80"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.5}
+                  d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"
+                />
+              </svg>
+              <span className="flex-1 text-left text-sm truncate">
+                {sortOptions.find((opt) => opt.value === sortOption)?.label || 'Sort'}
               </span>
-              <div className="relative h-16 bg-[#f5eee2] dark:bg-[#0a152e] shrink-0 flex items-center justify-center overflow-hidden rounded-full border border-[#dcc7aa] dark:border-[#cdaa80]/20 shadow-[inset_0_2px_8px_rgba(153,121,83,0.12),_0_10px_24px_rgba(68,56,49,0.08)] dark:shadow-[inset_0_4px_12px_rgba(0,0,0,0.5),_0_8px_32px_rgba(0,0,0,0.4)]">
-                <div className="absolute left-0 w-24 h-full bg-gradient-to-r from-[#f5eee2] via-[#f5eee2]/80 to-transparent dark:from-[#0a152e] dark:via-[#0a152e]/80 z-20 pointer-events-none rounded-l-full" />
-                <div className="absolute right-0 w-24 h-full bg-gradient-to-l from-[#f5eee2] via-[#f5eee2]/80 to-transparent dark:from-[#0a152e] dark:via-[#0a152e]/80 z-20 pointer-events-none rounded-r-full" />
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[132px] h-[46px] bg-white/90 dark:bg-[#cdaa80]/15 border border-[#c7ab88] dark:border-[#cdaa80]/70 rounded-full z-10 pointer-events-none shadow-[0_0_18px_rgba(153,121,83,0.16)] dark:shadow-[0_0_20px_rgba(205,170,128,0.3)]" />
-                <div
-                  className="absolute top-1/2 left-1/2 flex items-center transition-transform duration-500 ease-out z-10"
-                  style={{ transform: `translate(calc(-${selectedSortIndex * 132 + 66}px), -50%)` }}
-                >
-                  {sortOptions.map((option, idx) => {
-                    const dist = Math.abs(idx - selectedSortIndex);
-                    const isSelected = dist === 0;
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={() => setSortOption(option.value)}
-                        className={`w-[132px] shrink-0 text-center cursor-pointer transition-all duration-300 tracking-wide text-[14px] font-semibold ${isSelected ? 'text-[#997953] drop-shadow-[0_0_10px_rgba(153,121,83,0.28)] dark:text-[#cdaa80] dark:drop-shadow-[0_0_12px_rgba(205,170,128,1)]' : 'text-[#7b6958]/60 hover:text-[#443831] dark:text-[#cdaa80]/50 dark:hover:text-[#cdaa80]/80'}`}
-                        style={{
-                          transform: `scale(${isSelected ? 1.03 : Math.max(0.78, 1 - dist * 0.15)})`,
-                          opacity: isSelected ? 1 : Math.max(0.2, 1 - dist * 0.25),
-                        }}
-                      >
-                        {option.label}
-                      </button>
-                    );
-                  })}
-                </div>
+              <svg
+                className={`w-4 h-4 shrink-0 transition-transform duration-300 ${
+                  isSortOpen ? 'rotate-180' : ''
+                }`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M19 9l-7 7-7-7"
+                />
+              </svg>
+            </button>
+            <div
+              ref={dropdownContentRef}
+              className="absolute top-full left-0 mt-2 w-56 bg-white dark:bg-[#0f1e3f] border border-[#e3d4bf] dark:border-[#cdaa80]/30 rounded-lg shadow-[0_18px_45px_rgba(68,56,49,0.14)] dark:shadow-2xl overflow-hidden"
+              style={{ display: 'none' }}
+            >
+              <div className="max-h-[240px] overflow-y-auto custom-scrollbar py-1">
+                {sortOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    onClick={() => {
+                      setSortOption(option.value);
+                      setIsSortOpen(false);
+                    }}
+                    className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${
+                      sortOption === option.value
+                        ? 'bg-[#f6ede1] text-[#997953] font-medium dark:bg-[#cdaa80]/20 dark:text-[#cdaa80]'
+                        : 'text-[#5b4b3d] hover:bg-[#f8f1e7] hover:text-[#443831] dark:text-white/80 dark:hover:bg-[#213a56] dark:hover:text-[#cdaa80]'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
               </div>
             </div>
           </div>
         </div>
 
-        {/* Scrollable Cases List - Updated with Yellow Card Theme */}
-        <div ref={cardsWrapperRef} className="flex-1 overflow-y-auto pr-2 space-y-4 custom-scrollbar">
+        {/* Scrollable Cases List */}
+        <div
+          ref={cardsWrapperRef}
+          className="flex-1 overflow-y-auto pr-2 space-y-4 custom-scrollbar"
+        >
           {sortedCases.map((c) => (
             <div
               key={c.id}
