@@ -243,7 +243,7 @@ export default function AnimatedAuth({
     // Email confirmation OFF → redirect immediately
     const userRole = data.user?.user_metadata?.role ?? 'citizen';
     if (userRole === 'lawyer') {
-      router.push('/portal/dashboard');
+      router.push('/lawyerside/home');
     } else {
       router.push('/citizen/home');
     }
@@ -292,7 +292,7 @@ export default function AnimatedAuth({
     setLoading(false);
 
     if (roleData.role === 'lawyer') {
-      router.push('/portal/dashboard');
+      router.push('/lawyerside/home');
     } else if (roleData.role === 'admin') {
       router.push('/admin/dashboard');
     } else {
