@@ -2,6 +2,7 @@
 
 import React, { useRef, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { useGSAP } from "@gsap/react";
@@ -239,12 +240,39 @@ export default function Header({
 
       <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
 
-        {/* Left Side: Theme Toggle & Text Logo */}
+        {/* Left Side: Theme Toggle & Text Logo with Balance Logo */}
         <div className="flex items-center gap-4">
           <div className="hidden md:block scale-75 origin-left">
             <ThemeToggle />
           </div>
-          <Link href="/" className="inline-block group">
+          <Link href="/" className="inline-block group flex items-center gap-2">
+            {theme === "dark" ? (
+              <span
+                aria-hidden="true"
+                className="block group-hover:opacity-70 transition-opacity"
+                style={{
+                  width: 40,
+                  height: 40,
+                  backgroundColor: "currentColor",
+                  WebkitMaskImage: "url('/balance_512.png')",
+                  maskImage: "url('/balance_512.png')",
+                  WebkitMaskRepeat: "no-repeat",
+                  maskRepeat: "no-repeat",
+                  WebkitMaskPosition: "center",
+                  maskPosition: "center",
+                  WebkitMaskSize: "contain",
+                  maskSize: "contain",
+                }}
+              />
+            ) : (
+              <Image
+                src="/balance_512.png"
+                alt="NyayaAI Logo"
+                width={40}
+                height={40}
+                className="group-hover:opacity-70 transition-opacity"
+              />
+            )}
             <span className="font-serif text-3xl font-medium tracking-tight group-hover:opacity-70 transition-opacity">
               {logoText}
             </span>

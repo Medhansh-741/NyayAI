@@ -1,8 +1,10 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from 'react';
+import Image from 'next/image';
 import gsap from 'gsap';
-import { Aperture, Mail, Linkedin, Instagram, Facebook, type LucideIcon } from 'lucide-react';
+import { Mail, Linkedin, Instagram, Facebook, type LucideIcon } from 'lucide-react';
+import { useTheme } from './themeprovider';
 
 // ==========================================
 // 1. EXPORTED INTERFACES
@@ -33,7 +35,6 @@ export interface FooterThemeColors {
 export interface FooterProps {
   /** Logo configuration */
   logoText?: string;
-  logoIcon?: LucideIcon;
   
   /** Newsletter configuration */
   subscribePlaceholder?: string;
@@ -86,7 +87,6 @@ const DEFAULT_SOCIALS: SocialLink[] = [
 
 export const Footer: React.FC<FooterProps> = ({
   logoText = "NyayaAI",
-  logoIcon: LogoIcon = Aperture,
   subscribePlaceholder = "Enter your email",
   subscribeButtonText = "Subscribe",
   onSubscribe,
@@ -99,6 +99,7 @@ export const Footer: React.FC<FooterProps> = ({
   const [email, setEmail] = useState("");
   const footerRef = useRef<HTMLDivElement>(null);
   const socialRefs = useRef<(HTMLAnchorElement | null)[]>([]);
+  const { theme, mounted } = useTheme();
 
   // Merge default colors with any user-provided overrides
   const colors = { ...DEFAULT_THEME, ...themeColors };
@@ -165,7 +166,32 @@ export const Footer: React.FC<FooterProps> = ({
         {/* Top Section */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 md:gap-5 pb-5 md:pb-6">
           <div className="flex items-center gap-3">
-            <LogoIcon size={30} strokeWidth={2.5} className="text-[var(--footer-text-light)] dark:text-[var(--footer-text-dark)]" />
+            {mounted && theme === "dark" ? (
+              <span
+                aria-hidden="true"
+                className="block transition-opacity"
+                style={{
+                  width: 30,
+                  height: 30,
+                  backgroundColor: "currentColor",
+                  WebkitMaskImage: "url('/balance_512.png')",
+                  maskImage: "url('/balance_512.png')",
+                  WebkitMaskRepeat: "no-repeat",
+                  maskRepeat: "no-repeat",
+                  WebkitMaskPosition: "center",
+                  maskPosition: "center",
+                  WebkitMaskSize: "contain",
+                  maskSize: "contain",
+                }}
+              />
+            ) : (
+              <Image
+                src="/balance_512.png"
+                alt="NyayaAI Logo"
+                width={30}
+                height={30}
+              />
+            )}
             <span className="text-xl md:text-2xl font-serif font-semibold tracking-tight">{logoText}</span>
           </div>
 
