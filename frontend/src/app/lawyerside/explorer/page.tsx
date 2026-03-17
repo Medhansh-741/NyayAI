@@ -1,45 +1,9 @@
 'use client';
-import React, { useRef, useState, useEffect } from 'react';
+import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Sidebar } from '../../../../components/sidebar';
-import type { NavItem } from '../../../../components/sidebar';
-import gsap from 'gsap';
-import { createBrowserClient } from '@supabase/ssr';
-import { Database } from '../../../types/supabase';
-import { Menu, Home, Compass, Store, Gavel } from 'lucide-react';
 
-import { useGSAP } from '@gsap/react';
-
-const LAWYER_NAV_ITEMS: NavItem[] = [
-  { id: 'menu', icon: Menu, label: 'Menu' },
-  { id: 'home', icon: Home, label: 'Home', href: '/lawyerside/home' },
-  { id: 'explorer', icon: Compass, label: 'Explorer', href: '/lawyerside/explorer' },
-  { id: 'marketplace', icon: Store, label: 'Marketplace', href: '/lawyerside/marketplace' },
-  { id: 'my-cases', icon: Gavel, label: 'My Cases', href: '/lawyerside/my-cases' },
-];
-
-export default function LawyerLegalRightsExplorer() {
+export default function RedirectToHome() {
   const router = useRouter();
-  const containerRef = useRef<HTMLDivElement>(null);
-  const titleRef = useRef<HTMLHeadingElement>(null);
-  const searchBarRef = useRef<HTMLDivElement>(null);
-  const domainsHeaderRef = useRef<HTMLHeadingElement>(null);
-  const cardsRef = useRef<HTMLDivElement>(null);
-  const featuredHeaderRef = useRef<HTMLHeadingElement>(null);
-  const featuredCardRef = useRef<HTMLDivElement>(null);
-
-  const [activeLang, setActiveLang] = useState('ENGLISH');
-
-  const handleProfileClick = () => {
-    router.push('/lawyerside/profile');
-  };
-  const [featuredCase, setFeaturedCase] = useState<Database['public']['Tables']['cases']['Row'] | null>(null);
-  const [loadingFeatured, setLoadingFeatured] = useState(true);
-
-  const supabase = createBrowserClient<Database>(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
 
   useEffect(() => {
     const fetchFeaturedTopic = async () => {
@@ -181,10 +145,7 @@ export default function LawyerLegalRightsExplorer() {
   return (
     <div className="flex bg-gray-50 dark:bg-[#0f1e3f] font-sans h-screen overflow-hidden text-gray-900 dark:text-white transition-colors duration-300" ref={containerRef}>
       {/* Sidebar Navigation */}
-      <div className="hidden md:block shrink-0 h-screen z-[1000] md:sticky md:top-0 shadow-[4px_0_24px_rgba(0,0,0,0.05)] dark:shadow-none bg-white dark:bg-[#0a152e]">
-        <Sidebar navItems={LAWYER_NAV_ITEMS} showProfileButton={true} onProfileClick={handleProfileClick} />
-      </div>
-      <div className="md:hidden relative z-[1000]">
+      <div className="shrink-0 h-screen z-50 md:sticky md:top-0 shadow-[4px_0_24px_rgba(0,0,0,0.05)] dark:shadow-none bg-white dark:bg-[#0a152e]">
         <Sidebar navItems={LAWYER_NAV_ITEMS} showProfileButton={true} onProfileClick={handleProfileClick} />
       </div>
 
@@ -194,7 +155,7 @@ export default function LawyerLegalRightsExplorer() {
         <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-[#997953]/[0.08] dark:bg-white/[0.02] rounded-full blur-[100px] pointer-events-none"></div>
         <div className="absolute bottom-0 right-0 w-[300px] h-[300px] bg-[#997953]/[0.12] dark:bg-[#cdaa80]/[0.05] rounded-full blur-[80px] pointer-events-none"></div>
 
-        <div className="w-full max-w-[1400px] mx-auto pt-20 pb-10 px-6 md:py-12 z-10 flex flex-col flex-1">
+        <div className="w-full max-w-[1400px] mx-auto px-6 py-10 md:py-12 z-10 flex flex-col flex-1">
           
           {/* Title */}
           <h1 ref={titleRef} className="pt-4 md:pt-8 text-3xl md:text-4xl lg:text-[46px] font-serif font-bold text-[#997953] dark:text-[#cdaa80] text-center mb-10 tracking-widest drop-shadow-md">

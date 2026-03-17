@@ -1,0 +1,19 @@
+LEGAL NOTICE
+
+Subject: Legal Notice
+
+Facts of the Case:
+{facts}
+
+Applicable Laws:
+{laws}
+
+Requested Action:
+{plan}
+
+You are hereby requested to comply within 15 days from the receipt of this notice.
+
+Failure to comply may result in legal proceedings.
+
+Sincerely,
+Legal AI System

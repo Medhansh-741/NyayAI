@@ -1,0 +1,12 @@
+CONSUMER COMPLAINT
+
+Facts of the Case:
+{facts}
+
+Applicable Laws:
+{laws}
+
+Relief Requested:
+{plan}
+
+The complainant respectfully requests the consumer forum to provide appropriate relief.

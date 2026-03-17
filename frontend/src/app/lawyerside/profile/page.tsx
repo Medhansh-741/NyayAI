@@ -56,7 +56,6 @@ function formatTitle(value: string | null | undefined) {
 const LAWYER_NAV_ITEMS: NavItem[] = [
   { id: 'menu', icon: Menu, label: 'Menu' },
   { id: 'home', icon: Home, label: 'Home', href: '/lawyerside/home' },
-  { id: 'explorer', icon: Compass, label: 'Explorer', href: '/lawyerside/explorer' },
   { id: 'marketplace', icon: Store, label: 'Marketplace', href: '/lawyerside/marketplace' },
   { id: 'my-cases', icon: Gavel, label: 'My Cases', href: '/lawyerside/my-cases' },
 ]

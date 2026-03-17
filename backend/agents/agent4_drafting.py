@@ -29,6 +29,26 @@ logger = logging.getLogger(__name__)
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
+# Template Directory (migrated from desktop)
+TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "templates")
+
+def _load_template(doc_type: str) -> str:
+    """Load a document template if it exists."""
+    template_map = {
+        "fir": "fir.txt",
+        "legal_notice": "legal_notice.txt",
+        "consumer_complaint": "consumer_complaint.txt"
+    }
+    filename = template_map.get(doc_type)
+    if not filename:
+        return ""
+    
+    path = os.path.join(TEMPLATE_DIR, filename)
+    if os.path.exists(path):
+        with open(path, "r") as f:
+            return f.read()
+    return ""
+
 def _call_with_retry(prompt: str, system_prompt: str, client: Groq, max_attempts: int = 3) -> dict:
     """Call Groq with exponential backoff and JSON validation."""
     last_error = None
@@ -154,10 +174,12 @@ def drafting_agent(case_state: dict) -> dict:
     generated = {}
 
     for doc_type in doc_types:
+        template_content = _load_template(doc_type)
+        template_instr = f"\nUse this format/template as a reference:\n{template_content}\n" if template_content else ""
 
         prompt = f"""
 Generate a professional {doc_type} for this case.
-
+{template_instr}
 Case Details:
 Dispute Type: {context['dispute_type']}
 Complainant: {context['complainant']}
