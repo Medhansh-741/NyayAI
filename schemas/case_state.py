@@ -170,9 +170,9 @@ class CaseState(BaseModel):
     reasoning_trace: Optional[ReasoningTrace] = None
 
     # System fields
-    agent_trace: list[dict] = Field(default_factory=list)
+    agent_trace: list = Field(default_factory=list)
     human_review_flags: list[str] = Field(default_factory=list)
-    case_timeline: list[dict] = Field(default_factory=list)
+    case_timeline: list = Field(default_factory=list)
     user_feedback: dict = Field(default_factory=dict)
 
     class Config:

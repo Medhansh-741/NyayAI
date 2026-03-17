@@ -34,7 +34,7 @@ IMPORTANT RULES:
 2. Detect the user's language (hindi / english / hinglish) from the narrative.
 3. Detect the Indian state/jurisdiction from location clues in the narrative.
 4. Be conservative — only assert facts clearly present in the narrative.
-5. List missing information a lawyer would normally need.
+5. List missing information ONLY if it's ABSOLUTELY CRITICAL (e.g., missing the core incident type or parties). If the incident is reasonably described, return an empty list for missing_information to allow the analysis to proceed.
 
 Classify incident_type as exactly one of:
 consumer | tenant | labour | criminal | cyber | property | family | rti | corruption
@@ -62,7 +62,7 @@ Return the exact JSON structure matching this schema:
     "urgency_level": "string",
     "monetary_value_inr": "number or null",
     "key_facts": ["string"],
-    "missing_information": ["string"],
+    "missing_information": [],
     "dispute_context": "string or null"
   },
   "evidence_inventory": [
@@ -205,13 +205,17 @@ def _build_structured_facts(data: dict):
         p["role"] = p.get("role") or "unknown"
         parties.append(Party(**p))
 
+    VALID_URGENCY = {"immediate", "standard", "low"}
+    raw_urgency = sf.get("urgency_level") or "standard"
+    urgency = raw_urgency if raw_urgency in VALID_URGENCY else "standard"
+
     return StructuredFacts(
         incident_type=sf.get("incident_type") or "consumer",
         incident_summary=sf.get("incident_summary") or "No summary provided.",
         incident_date=sf.get("incident_date"),
         parties=parties,
         timeline=sf.get("timeline", []),
-        urgency_level=sf.get("urgency_level") or "medium",
+        urgency_level=urgency,
         monetary_value_inr=sf.get("monetary_value_inr"),
         key_facts=sf.get("key_facts", []),
         missing_information=sf.get("missing_information", []),

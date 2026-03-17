@@ -29,9 +29,9 @@ def explainability_agent(case_state: dict, mode: str = "citizen") -> dict:
 
     per_section_confidence = [
         {
-            "section_ref": s.get("section_ref", ""),
-            "confidence": s.get("confidence", "medium"),
-            "reason": s.get("description")
+            "section_ref": s.get("section_ref", "") if isinstance(s, dict) else str(s),
+            "confidence": s.get("confidence", "medium") if isinstance(s, dict) else "medium",
+            "reason": (s.get("description") if isinstance(s, dict) else str(s))
             or f"Retrieved by Agent 2 for {facts.get('incident_type','this dispute')}",
         }
         for s in all_sections
@@ -41,33 +41,35 @@ def explainability_agent(case_state: dict, mode: str = "citizen") -> dict:
 
     if mode == "lawyer":
         citations = [
-            f"Case Law: {c.get('citation')} - {c.get('summary')}"
+            f"Case Law: {c.get('citation')} - {c.get('summary')}" if isinstance(c, dict) else str(c)
             for c in mapping.get("landmark_cases", [])
         ]
         
         for xref in mapping.get("ipc_crpc_crossref", []):
-            citations.append(
-                f"Reference: {xref.get('old_ref')} ({xref.get('act_old')}) -> "
-                f"NOW ENFORCED AS {xref.get('new_ref')} ({xref.get('act_new')})"
-            )
+            if isinstance(xref, dict):
+                citations.append(
+                    f"Reference: {xref.get('old_ref')} ({xref.get('act_old')}) -> "
+                    f"NOW ENFORCED AS {xref.get('new_ref')} ({xref.get('act_new')})"
+                )
     else:
         citations = [
-            f"{s.get('section_ref')} — {s.get('act_name')}"
+            f"{s.get('section_ref')} — {s.get('act_name')}" if isinstance(s, dict) else str(s)
             for s in all_sections
         ]
     
         for xref in mapping.get("ipc_crpc_crossref", []):
-            citations.append(
-                f"{xref.get('old_ref')} ({xref.get('act_old')}) -> "
-                f"{xref.get('new_ref')} ({xref.get('act_new')})"
-            )
+            if isinstance(xref, dict):
+                citations.append(
+                    f"{xref.get('old_ref')} ({xref.get('act_old')}) -> "
+                    f"{xref.get('new_ref')} ({xref.get('act_new')})"
+                )
 
     # ── Agent logs ───────────────────────────────────────────────────────────
 
     parties = facts.get("parties", [])
 
     complainant = next(
-        (p.get("name") for p in parties if p.get("role") == "complainant"),
+        (p.get("name") for p in parties if isinstance(p, dict) and p.get("role") == "complainant"),
         "Complainant"
     )
 
@@ -89,7 +91,7 @@ def explainability_agent(case_state: dict, mode: str = "citizen") -> dict:
     # ── Agent 3 reasoning ────────────────────────────────────────────────────
 
     strategy_trace = next(
-        (e for e in all_traces if e.get("agent") == "strategy"),
+        (e for e in all_traces if isinstance(e, dict) and e.get("agent") == "strategy"),
         {}
     )
 
@@ -113,7 +115,7 @@ def explainability_agent(case_state: dict, mode: str = "citizen") -> dict:
                 generated_keys.append(k)
 
     drafting_trace = next(
-        (e for e in all_traces if e.get("agent") == "drafting"),
+        (e for e in all_traces if isinstance(e, dict) and e.get("agent") == "drafting"),
         {}
     )
 
@@ -133,7 +135,7 @@ def explainability_agent(case_state: dict, mode: str = "citizen") -> dict:
 
     # ── Overall confidence ───────────────────────────────────────────────────
 
-    conf_scores = [s.get("confidence","medium") for s in all_sections]
+    conf_scores = [s.get("confidence","medium") if isinstance(s, dict) else "medium" for s in all_sections]
     standing = mapping.get("legal_standing_score","moderate")
 
     if all(c == "high" for c in conf_scores) and standing == "strong":

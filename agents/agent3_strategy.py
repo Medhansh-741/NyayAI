@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 from case_state import CaseState
 
-load_dotenv()
+load_dotenv(override=True)
 
 ENGINE = os.getenv("STRATEGY_ENGINE", "groq")
 logger = logging.getLogger(__name__)
