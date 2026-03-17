@@ -3,8 +3,9 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import gsap from 'gsap';
-import { Menu, Home, Compass, Gavel, Store, HelpCircle, Sun, Moon, type LucideIcon } from 'lucide-react';
+import { Menu, Home, Compass, Gavel, Store, HelpCircle, Sun, Moon, LogOut, type LucideIcon } from 'lucide-react';
 import { useTheme } from './themeprovider'; // Adjust path to your ThemeProvider
+import { signOut } from '@/lib/auth';
 
 // ==========================================
 // 1. EXPORTED INTERFACES
@@ -109,7 +110,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   } as React.CSSProperties;
 
   useEffect(() => {
-    const bottomActionsCount = (showThemeToggle ? 1 : 0) + (showHelpIcon ? 1 : 0);
+    const bottomActionsCount = (showThemeToggle ? 1 : 0) + 1 + (showHelpIcon ? 1 : 0);
     iconRefs.current.length = navItems.length + bottomActionsCount;
     labelRefs.current.length = navItems.length + bottomActionsCount;
   }, [navItems.length, showThemeToggle, showHelpIcon]);
@@ -229,6 +230,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
     });
   };
 
+  const handleLogout = async () => {
+    const { error } = await signOut();
+    if (error) {
+      console.error('Failed to sign out:', error.message);
+      return;
+    }
+    router.push('/login');
+  };
+
   return (
     <aside
       ref={sidebarRef}
@@ -325,10 +335,30 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         )}
 
+        {/* Logout Button */}
+        <div
+          ref={(el) => { iconRefs.current[navItems.length + (showThemeToggle ? 1 : 0)] = el; }}
+          onClick={handleLogout}
+          title="Logout"
+          className="cursor-pointer p-2 rounded-xl hover:bg-[var(--sb-hover-light)] dark:hover:bg-[var(--sb-hover-dark)] transition-colors duration-300 flex items-center md:justify-start md:overflow-hidden md:w-full"
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+        >
+          <LogOut size={24} strokeWidth={2.25} className="shrink-0" />
+          <span
+            ref={(el) => { labelRefs.current[navItems.length + (showThemeToggle ? 1 : 0)] = el; }}
+            className={`
+              hidden md:block whitespace-nowrap overflow-hidden opacity-0 max-w-0 ml-0
+            `}
+          >
+            Logout
+          </span>
+        </div>
+
         {/* Help Icon */}
         {showHelpIcon && (
           <div
-            ref={(el) => { iconRefs.current[navItems.length + (showThemeToggle ? 1 : 0)] = el; }}
+            ref={(el) => { iconRefs.current[navItems.length + (showThemeToggle ? 1 : 0) + 1] = el; }}
             onClick={onHelpClick}
             title="Help & Support"
             className="cursor-pointer p-2 rounded-xl hover:bg-[var(--sb-hover-light)] dark:hover:bg-[var(--sb-hover-dark)] transition-colors duration-300 flex items-center md:justify-start md:overflow-hidden md:w-full"
@@ -337,7 +367,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           >
             <HelpIcon size={24} strokeWidth={2.25} className="shrink-0" />
             <span
-              ref={(el) => { labelRefs.current[navItems.length + (showThemeToggle ? 1 : 0)] = el; }}
+              ref={(el) => { labelRefs.current[navItems.length + (showThemeToggle ? 1 : 0) + 1] = el; }}
               className={`
               hidden md:block whitespace-nowrap overflow-hidden opacity-0 max-w-0 ml-0
             `}

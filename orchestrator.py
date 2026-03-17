@@ -16,7 +16,7 @@ from agent3_strategy import run_strategy_agent as strategy_agent
 from agent4_drafting import drafting_agent
 from agent5_explainability import explainability_agent
 
-load_dotenv()
+load_dotenv(override=True)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -26,19 +26,28 @@ class GraphState(TypedDict):
     case_state: dict
     mode: str          # "citizen" or "lawyer" (for Legal Explorer)
     intake_status: str # "complete" or "awaiting_user_response"
+    force_complete: bool # True to skip follow-up loop and proceed
 
 # --- Node Handlers ---
 
 def run_agent1(state: GraphState):
     logger.info("--- NODE: AGENT 1 (INTAKE) ---")
     case_dict = state.get("case_state", {})
+    force_complete = state.get("force_complete", False)
+    
     # Agent 1 expects a Pydantic object
     pydantic_state = CaseState(**case_dict)
     updated_case = intake_agent(pydantic_state)
     
+    # If force_complete is set, override Agent 1's decision and proceed
+    if force_complete:
+        logger.info("--- FORCE COMPLETE: Overriding intake status to 'complete' ---")
+        updated_case.intake_status = "complete"
+        updated_case.follow_up_questions = []  # Clear any leftover questions
+    
     # Store everything as a flat dict moving between nodes
     status = "complete" if updated_case.intake_status == "complete" else "awaiting_user_response"
-    return {"case_state": updated_case.model_dump(), "intake_status": status, "mode": state.get("mode")}
+    return {"case_state": updated_case.model_dump(), "intake_status": status, "mode": state.get("mode"), "force_complete": force_complete}
 
 
 def run_agent2(state: GraphState):

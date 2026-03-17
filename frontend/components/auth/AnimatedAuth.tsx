@@ -47,48 +47,48 @@ export interface AnimatedAuthProps {
 const roles = ['citizen', 'lawyer'] as const;
 type Role = (typeof roles)[number];
 
-export const ANIMATED_AUTH_TRANSITION_TINT_COLOR = '#d2b48c';
+export const ANIMATED_AUTH_TRANSITION_TINT_COLOR = '#cdaa80';
 
 export const AUTH_COLORS_LIGHT = {
-  themeColor: '#cbae86',
-  glowColor: 'rgba(32, 10, 8, 0.46)',
-  backgroundColor: '#e4e3e1',
-  backdrop: '#f4f0d9',
-  placeholderColor: 'rgb(0, 0, 0)',
-  textColor: '#000000',
-  secondaryTextColor: '#6b7280',
-  borderColor: '#d1d5db',
-  transitionTintColor: '#d2b48c',
-  themeColorDark: '#8c6a5d',
-  glowColorDark: 'rgba(16, 5, 4, 0.6)',
-  backgroundColorDark: '#2c241b',
-  backdropDark: '#1f1515',
-  placeholderColorDark: 'rgba(255, 255, 255, 1)',
-  textColorDark: '#ffffff',
-  secondaryTextColorDark: '#9ca3af',
-  borderColorDark: '#4b5563',
-  transitionTintColorDark: '#2c241b',
+  themeColor: '#997953',
+  glowColor: 'rgba(68,56,49,0.20)',
+  backgroundColor: '#f5f0e8',
+  backdrop: '#efe6d8',
+  placeholderColor: 'rgba(68,56,49,0.70)',
+  textColor: '#443831',
+  secondaryTextColor: '#6f6255',
+  borderColor: '#d8c1a1',
+  transitionTintColor: '#dcc4a3',
+  themeColorDark: '#cdaa80',
+  glowColorDark: 'rgba(8,18,40,0.42)',
+  backgroundColorDark: '#0f1e3f',
+  backdropDark: '#0a152e',
+  placeholderColorDark: 'rgba(232,226,214,0.85)',
+  textColorDark: '#e8e2d6',
+  secondaryTextColorDark: '#c6b49d',
+  borderColorDark: '#2b4b6b',
+  transitionTintColorDark: '#213a56',
 };
 
 export const AUTH_COLORS_DARK = {
-  themeColor: '#8c6a5d',
-  glowColor: 'rgba(16, 5, 4, 0.6)',
-  backgroundColor: '#2c241b',
-  backdrop: '#1f1515',
-  placeholderColor: 'rgba(255, 255, 255, 1)',
-  textColor: '#ffffff',
-  secondaryTextColor: '#9ca3af',
-  borderColor: '#4b5563',
-  transitionTintColor: '#2c241b',
-  themeColorDark: '#8c6a5d',
-  glowColorDark: 'rgba(16, 5, 4, 0.6)',
-  backgroundColorDark: '#2c241b',
-  backdropDark: '#1f1515',
-  placeholderColorDark: 'rgba(255, 255, 255, 1)',
-  textColorDark: '#ffffff',
-  secondaryTextColorDark: '#9ca3af',
-  borderColorDark: '#4b5563',
-  transitionTintColorDark: '#2c241b',
+  themeColor: '#cdaa80',
+  glowColor: 'rgba(8,18,40,0.42)',
+  backgroundColor: '#0f1e3f',
+  backdrop: '#0a152e',
+  placeholderColor: 'rgba(232,226,214,0.85)',
+  textColor: '#e8e2d6',
+  secondaryTextColor: '#c6b49d',
+  borderColor: '#2b4b6b',
+  transitionTintColor: '#213a56',
+  themeColorDark: '#cdaa80',
+  glowColorDark: 'rgba(8,18,40,0.42)',
+  backgroundColorDark: '#0f1e3f',
+  backdropDark: '#0a152e',
+  placeholderColorDark: 'rgba(232,226,214,0.85)',
+  textColorDark: '#e8e2d6',
+  secondaryTextColorDark: '#c6b49d',
+  borderColorDark: '#2b4b6b',
+  transitionTintColorDark: '#213a56',
 };
 
 export default function AnimatedAuth({
@@ -447,7 +447,11 @@ export default function AnimatedAuth({
               'Please wait...'
             ) : (
               <>
-                <img src="/Googe_icon.svg" alt="Google logo" className="h-5 w-5" />
+                <img
+                  src="/google_icon.svg"
+                  alt="Google logo"
+                  className="h-5 w-5"
+                />
                 <span>Login via Google</span>
               </>
             )}
@@ -544,7 +548,11 @@ export default function AnimatedAuth({
               'Please wait...'
             ) : (
               <>
-                <img src="/Googe_icon.svg" alt="Google logo" className="h-4 w-4" />
+                <img
+                  src="/google_icon.svg"
+                  alt="Google logo"
+                  className="h-4 w-4"
+                />
                 <span>Signup via Google</span>
               </>
             )}

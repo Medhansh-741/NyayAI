@@ -5,6 +5,7 @@ import gsap from 'gsap';
 import { useGSAP } from '@gsap/react';
 import { Footer } from '../../../../components/footer';
 import { Sidebar } from '../../../../components/sidebar';
+import { useTheme } from '../../../../components/themeprovider';
 
 // Example cases data
 const INITIAL_CASES = [
@@ -81,6 +82,8 @@ export default function CaseHistory() {
   const [searchQuery, setSearchQuery] = useState('');
   const [clickedCardId, setClickedCardId] = useState<number | null>(null);
   const [sortOption, setSortOption] = useState<'latest' | 'oldest' | 'title_asc' | 'title_desc'>('latest');
+  const { theme, mounted } = useTheme();
+  const isDark = mounted && theme === 'dark';
 
   const sortOptions: Array<{ label: string; value: typeof sortOption }> = [
     { label: 'Latest Case', value: 'latest' },
@@ -115,73 +118,84 @@ export default function CaseHistory() {
     return 0;
   });
   const selectedSortIndex = Math.max(0, sortOptions.findIndex((option) => option.value === sortOption));
-
+  // Initial page entrance
   useGSAP(
     () => {
-      const tl = gsap.timeline({ defaults: { ease: 'power2.out' } });
-      tl.from('.cases-top-nav', { y: -18, opacity: 0, duration: 0.45 })
-        .from('.cases-search-sort', { y: 14, opacity: 0, duration: 0.4 }, '-=0.2')
-        .from('.case-card', { y: 24, opacity: 0, duration: 0.42, stagger: 0.07 }, '-=0.15');
+      const tl = gsap.timeline();
+      tl.fromTo(
+        '.cases-top-nav',
+        { opacity: 0, y: -30 },
+        { opacity: 1, y: 0, duration: 0.8, ease: 'power3.out' }
+      )
+      .fromTo(
+        '.cases-search-sort',
+        { opacity: 0, y: -20, scale: 0.95 },
+        { opacity: 1, y: 0, scale: 1, duration: 0.6, ease: 'power3.out' },
+        '-=0.4'
+      );
     },
     { scope: pageRef }
   );
 
+  // Card stagger - re-triggers on sort/search
   useGSAP(
     () => {
       gsap.fromTo(
         '.case-card',
-        { y: 18, opacity: 0, scale: 0.985 },
-        { y: 0, opacity: 1, scale: 1, duration: 0.36, stagger: 0.05, ease: 'power2.out' }
+        { opacity: 0, y: 30 },
+        { 
+          opacity: 1, 
+          y: 0, 
+          stagger: 0.08, 
+          duration: 0.6, 
+          ease: 'back.out(1.2)', 
+          clearProps: 'all'
+        }
       );
     },
     { scope: cardsWrapperRef, dependencies: [sortOption, searchQuery], revertOnUpdate: true }
-  );
-
-  useGSAP(
-    () => {
-      gsap.from('.search-shell', {
-        opacity: 0,
-        y: 10,
-        scale: 0.985,
-        duration: 0.42,
-        ease: 'power2.out',
-        delay: 0.05
-      });
-    },
-    { scope: pageRef }
   );
 
   const handleSearchFocus = () => {
     if (!searchContainerRef.current || !searchIconRef.current) return;
     gsap.to(searchContainerRef.current, {
       scale: 1.01,
-      boxShadow: '0 0 0 1px rgba(205,170,128,0.65), 0 14px 35px rgba(8,18,40,0.42)',
+      boxShadow: isDark
+        ? '0 0 0 1px rgba(205,170,128,0.65), 0 14px 35px rgba(8,18,40,0.42)'
+        : '0 0 0 1px rgba(153,121,83,0.35), 0 10px 24px rgba(68,56,49,0.12)',
       duration: 0.22,
       ease: 'power2.out'
     });
-    gsap.to(searchIconRef.current, { color: '#cdaa80', scale: 1.08, duration: 0.22, ease: 'power2.out' });
+    gsap.to(searchIconRef.current, { color: isDark ? '#cdaa80' : '#997953', scale: 1.08, duration: 0.22, ease: 'power2.out' });
   };
 
   const handleSearchBlur = () => {
     if (!searchContainerRef.current || !searchIconRef.current) return;
     gsap.to(searchContainerRef.current, {
       scale: 1,
-      boxShadow: '0 8px 24px rgba(8,18,40,0.28)',
+      boxShadow: isDark
+        ? '0 8px 24px rgba(8,18,40,0.28)'
+        : '0 8px 24px rgba(68,56,49,0.08)',
       duration: 0.22,
       ease: 'power2.out'
     });
-    gsap.to(searchIconRef.current, { color: 'rgba(255,255,255,0.4)', scale: 1, duration: 0.22, ease: 'power2.out' });
+    gsap.to(searchIconRef.current, {
+      color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(68,56,49,0.4)',
+      scale: 1,
+      duration: 0.22,
+      ease: 'power2.out'
+    });
   };
 
   return (
-    <div ref={pageRef} className="flex min-h-screen bg-[#0f1e3f]">
+    <div ref={pageRef} className="flex min-h-screen bg-gray-50 dark:bg-[#0f1e3f] transition-colors duration-300">
       <div className="md:sticky md:top-0 md:h-screen shrink-0 z-50">
         <Sidebar />
       </div>
-      <div className="flex-1 max-w-[1200px] mx-auto p-6 md:p-8 text-white flex flex-col pb-24 md:pb-8">
+      <div className="flex-1 max-w-[1200px] mx-auto p-6 md:p-8 text-gray-900 dark:text-white flex flex-col pb-24 md:pb-8">
 
         {/* Top Header/Nav Area */}
-        <div className="cases-top-nav flex border-b border-[#213a56] pb-2 mb-6 shrink-0">
+        <div className="cases-top-nav flex border-b border-[#d8c1a1] dark:border-[#213a56] pb-2 mb-6 shrink-0">
           <nav className="flex gap-6 text-sm">
             <button className="text-[#cdaa80] border-b-2 border-[#cdaa80] pb-2 font-medium">Cases</button>
           </nav>
@@ -189,15 +203,15 @@ export default function CaseHistory() {
 
         {/* Search and Filters Area */}
         <div className="cases-search-sort space-y-4 mb-6 shrink-0">
-          <div ref={searchContainerRef} className="search-shell relative group rounded-full border border-[#2b4b6b] bg-[#12284f]/85 shadow-[0_8px_24px_rgba(8,18,40,0.28)] overflow-hidden">
+          <div ref={searchContainerRef} className="search-shell relative group rounded-full border border-[#d8c1a1] dark:border-[#2b4b6b] bg-white dark:bg-[#12284f]/85 shadow-[0_8px_24px_rgba(68,56,49,0.08)] dark:shadow-[0_8px_24px_rgba(8,18,40,0.28)] overflow-hidden transition-colors duration-300">
             <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-              <svg ref={searchIconRef} className="h-4 w-4 text-white/40 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg ref={searchIconRef} className="h-4 w-4 text-[#443831]/40 dark:text-white/40 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
               </svg>
             </div>
             <input
               type="text"
-              className="w-full bg-transparent border-none rounded-full pl-11 pr-4 py-3 text-sm outline-none text-white placeholder-white/40"
+              className="w-full bg-transparent border-none rounded-full pl-11 pr-4 py-3 text-sm outline-none text-[#443831] dark:text-white placeholder-[#443831]/40 dark:placeholder-white/40"
               placeholder="Search your legal cases..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -211,10 +225,10 @@ export default function CaseHistory() {
               <span className="mb-2 block text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-[#cdaa80]/70">
                 Sort Cases
               </span>
-              <div className="relative h-16 bg-[#0a152e] shrink-0 flex items-center justify-center overflow-hidden rounded-full border border-[#cdaa80]/20 shadow-[inset_0_4px_12px_rgba(0,0,0,0.5),_0_8px_32px_rgba(0,0,0,0.4)]">
-                <div className="absolute left-0 w-24 h-full bg-gradient-to-r from-[#0a152e] via-[#0a152e]/80 to-transparent z-20 pointer-events-none rounded-l-full" />
-                <div className="absolute right-0 w-24 h-full bg-gradient-to-l from-[#0a152e] via-[#0a152e]/80 to-transparent z-20 pointer-events-none rounded-r-full" />
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[132px] h-[46px] bg-[#cdaa80]/15 border border-[#cdaa80]/70 rounded-full z-10 pointer-events-none shadow-[0_0_20px_rgba(205,170,128,0.3)]" />
+              <div className="relative h-16 bg-[#f5eee2] dark:bg-[#0a152e] shrink-0 flex items-center justify-center overflow-hidden rounded-full border border-[#dcc7aa] dark:border-[#cdaa80]/20 shadow-[inset_0_2px_8px_rgba(153,121,83,0.12),_0_10px_24px_rgba(68,56,49,0.08)] dark:shadow-[inset_0_4px_12px_rgba(0,0,0,0.5),_0_8px_32px_rgba(0,0,0,0.4)]">
+                <div className="absolute left-0 w-24 h-full bg-gradient-to-r from-[#f5eee2] via-[#f5eee2]/80 to-transparent dark:from-[#0a152e] dark:via-[#0a152e]/80 z-20 pointer-events-none rounded-l-full" />
+                <div className="absolute right-0 w-24 h-full bg-gradient-to-l from-[#f5eee2] via-[#f5eee2]/80 to-transparent dark:from-[#0a152e] dark:via-[#0a152e]/80 z-20 pointer-events-none rounded-r-full" />
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[132px] h-[46px] bg-white/90 dark:bg-[#cdaa80]/15 border border-[#c7ab88] dark:border-[#cdaa80]/70 rounded-full z-10 pointer-events-none shadow-[0_0_18px_rgba(153,121,83,0.16)] dark:shadow-[0_0_20px_rgba(205,170,128,0.3)]" />
                 <div
                   className="absolute top-1/2 left-1/2 flex items-center transition-transform duration-500 ease-out z-10"
                   style={{ transform: `translate(calc(-${selectedSortIndex * 132 + 66}px), -50%)` }}
@@ -227,7 +241,7 @@ export default function CaseHistory() {
                         key={option.value}
                         type="button"
                         onClick={() => setSortOption(option.value)}
-                        className={`w-[132px] shrink-0 text-center cursor-pointer transition-all duration-300 tracking-wide text-[14px] font-semibold ${isSelected ? 'text-[#cdaa80] drop-shadow-[0_0_12px_rgba(205,170,128,1)]' : 'text-[#cdaa80]/50 hover:text-[#cdaa80]/80'}`}
+                        className={`w-[132px] shrink-0 text-center cursor-pointer transition-all duration-300 tracking-wide text-[14px] font-semibold ${isSelected ? 'text-[#997953] drop-shadow-[0_0_10px_rgba(153,121,83,0.28)] dark:text-[#cdaa80] dark:drop-shadow-[0_0_12px_rgba(205,170,128,1)]' : 'text-[#7b6958]/60 hover:text-[#443831] dark:text-[#cdaa80]/50 dark:hover:text-[#cdaa80]/80'}`}
                         style={{
                           transform: `scale(${isSelected ? 1.03 : Math.max(0.78, 1 - dist * 0.15)})`,
                           opacity: isSelected ? 1 : Math.max(0.2, 1 - dist * 0.25),
@@ -248,10 +262,12 @@ export default function CaseHistory() {
           {sortedCases.map((c) => (
             <div
               key={c.id}
-              onClick={() => setClickedCardId(c.id)}
-              onAnimationEnd={() => setClickedCardId(null)}
+              onClick={() => {
+                setClickedCardId(c.id);
+                setTimeout(() => setClickedCardId(null), 1000);
+              }}
               className={`
-              case-card bg-[#d9c5a0] rounded-lg p-6 border border-transparent 
+              case-card bg-white dark:bg-[#cdaa80] rounded-lg p-6 border border-[#e3d4bf] dark:border-transparent 
               hover:shadow-xl hover:translate-y-[-2px] cursor-pointer text-left w-full
               transition-all duration-300 relative group overflow-hidden
             `}
@@ -273,7 +289,7 @@ export default function CaseHistory() {
                 <div className="flex items-center gap-3 shrink-0">
                   <span className={`
                   inline-flex items-center px-4 py-1.5 rounded-full text-[11px] font-bold border transition-colors
-                  ${c.status === 'Submitted' ? 'bg-[#0f1e3f] text-white border-transparent' :
+                  ${c.status === 'Submitted' ? 'bg-[#0f1e3f] text-[#cdaa80] border-transparent' :
                       c.status === 'Case Completed' ? 'bg-[#0f1e3f]/20 text-[#0f1e3f] border-[#0f1e3f]/10' :
                         'bg-transparent text-[#0f1e3f] border-[#0f1e3f]/30'}
                 `}>
@@ -304,7 +320,7 @@ export default function CaseHistory() {
           ))}
 
           {filteredCases.length === 0 && (
-            <div className="text-center py-12 text-white/50">
+            <div className="text-center py-12 text-[#443831]/60 dark:text-white/50">
               No cases found matching your search.
             </div>
           )}
@@ -316,24 +332,33 @@ export default function CaseHistory() {
           width: 6px;
         }
         .custom-scrollbar::-webkit-scrollbar-track {
-          background: transparent;
+          background: #f3eadf;
         }
         .custom-scrollbar::-webkit-scrollbar-thumb {
-          background-color: #213a56;
+          background-color: rgba(153,121,83,0.35);
           border-radius: 10px;
         }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-          background-color: #cdaa80;
+          background-color: rgba(153,121,83,0.55);
+        }
+        .dark .custom-scrollbar::-webkit-scrollbar-track {
+          background: #0f1e3f;
+        }
+        .dark .custom-scrollbar::-webkit-scrollbar-thumb {
+          background-color: #213a56;
+        }
+        .dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background-color: rgba(205,170,128,0.5);
         }
       `}} />
 
         <Footer
           themeColors={{
-            bgLight: '#0f1e3f',
+            bgLight: '#f5f0e8',
             bgDark: '#0f1e3f',
-            cardBgLight: '#0f1e3f',
+            cardBgLight: '#e9dfd2',
             cardBgDark: '#0f1e3f',
-            textLight: '#ffffff',
+            textLight: '#443831',
             textDark: '#cdaa80',
             accent: '#cdaa80',
             accentHover: '#997953',
