@@ -4,10 +4,11 @@ import { Sidebar } from '../../../../../components/sidebar';
 import gsap from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { useGSAP } from '@gsap/react';
-import { createBrowserClient } from '@supabase/ssr';
 import { Database } from '../../../../types/supabase';
 import { BadgeCheck, ArrowLeft, FileText, Scale, Phone, Mail } from 'lucide-react';
 import Link from 'next/link';
+import { supabase } from '@/lib/supabase/client';
+import { getActiveCaseForUser } from '@/lib/db/sessions';
 
 // Register ScrollTrigger plugin
 if (typeof window !== 'undefined') {
@@ -25,11 +26,8 @@ export default function LawyerProfilePage({ params }: { params: Promise<{ id: st
   const [lawyer, setLawyer] = useState<Database['public']['Tables']['lawyer_profiles']['Row'] | null>(null);
   const [cases, setCases] = useState<Database['public']['Tables']['lawyer_case_history']['Row'][]>([]);
   const [loading, setLoading] = useState(true);
-
-  const supabase = createBrowserClient<Database>(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
+  const [requesting, setRequesting] = useState(false)
+  const [requestMsg, setRequestMsg] = useState<string | null>(null)
 
   useEffect(() => {
     const fetchLawyerData = async () => {
@@ -63,7 +61,7 @@ export default function LawyerProfilePage({ params }: { params: Promise<{ id: st
     };
 
     fetchLawyerData();
-  }, [lawyerId, supabase]);
+  }, [lawyerId]);
 
   useGSAP(() => {
     if (loading) return; // Wait until data loads to animate
@@ -120,6 +118,61 @@ export default function LawyerProfilePage({ params }: { params: Promise<{ id: st
     );
 
   }, { scope: containerRef, dependencies: [loading] });
+
+  const handleRequestLawyer = async () => {
+    setRequestMsg(null)
+    setRequesting(true)
+    try {
+      const { data: authData, error: authError } = await supabase.auth.getUser()
+      if (authError || !authData.user) {
+        setRequestMsg('Please log in to request a lawyer.')
+        return
+      }
+
+      const { data: sessionRow } = await getActiveCaseForUser(authData.user.id)
+      let activeCaseId = sessionRow?.active_case_id ?? null
+
+      if (!activeCaseId) {
+        const { data: latestCase } = await supabase
+          .from('cases')
+          .select('id')
+          .eq('citizen_id', authData.user.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        activeCaseId = latestCase?.id ?? null
+      }
+
+      if (!activeCaseId) {
+        setRequestMsg('Please start a case in the chatbot first so we can attach this request.')
+        return
+      }
+
+      const { error: pipelineErr } = await supabase
+        .from('case_pipeline')
+        .insert({
+          lawyer_id: lawyerId,
+          case_id: activeCaseId,
+          stage: 'offered',
+          offer_note: 'Citizen requested this lawyer to take up the case.',
+          offer_sent_at: new Date().toISOString(),
+        })
+
+      if (pipelineErr) {
+        setRequestMsg(pipelineErr.message)
+        return
+      }
+
+      await supabase
+        .from('cases')
+        .update({ is_seeking_lawyer: false })
+        .eq('id', activeCaseId)
+
+      setRequestMsg('Request sent. The lawyer will see it in their Offered tab.')
+    } finally {
+      setRequesting(false)
+    }
+  }
 
   return (
     <div className="flex bg-[#111e3c] font-serif h-screen overflow-hidden" ref={containerRef}>
@@ -192,6 +245,14 @@ export default function LawyerProfilePage({ params }: { params: Promise<{ id: st
 
                     {/* Buttons / Contact */}
                     <div className="flex flex-wrap gap-4 font-sans font-medium text-sm mt-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleRequestLawyer()}
+                        disabled={requesting}
+                        className="action-btn flex items-center gap-2 px-6 py-2.5 border border-[#0f1e3f] text-[#d6b785] bg-[#0f1e3f] rounded-md hover:bg-[#0f1e3f]/90 hover:shadow-[0_0_15px_rgba(15,30,63,0.35)] transition-all duration-300 disabled:opacity-60"
+                      >
+                        {requesting ? 'Sending request…' : 'Request this lawyer'}
+                      </button>
                       <a 
                         href={`mailto:${lawyer.email || ''}`} 
                         className="action-btn flex items-center gap-2 px-6 py-2.5 border border-[#0f1e3f] text-[#0f1e3f] rounded-md hover:bg-[#0f1e3f] hover:text-[#d6b785] hover:shadow-[0_0_15px_rgba(15,30,63,0.4)] transition-all duration-300"
@@ -207,6 +268,11 @@ export default function LawyerProfilePage({ params }: { params: Promise<{ id: st
                         </a>
                       )}
                     </div>
+                    {requestMsg && (
+                      <div className="hero-text mt-4 text-sm font-sans text-[#0f1e3f]/80">
+                        {requestMsg}
+                      </div>
+                    )}
                   </>
                 ) : (
                   <div className="animate-pulse flex flex-col gap-4 py-6">

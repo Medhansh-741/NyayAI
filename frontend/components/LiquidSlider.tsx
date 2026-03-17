@@ -11,246 +11,337 @@ interface LiquidSliderProps {
 }
 
 export function LiquidSlider({ leftLabel, rightLabel, value, onChange }: LiquidSliderProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const blobRef = useRef<HTMLDivElement>(null);
-  const svgRef = useRef<SVGSVGElement>(null);
-  const wavePath1 = useRef<SVGPathElement>(null);
-  const wavePath2 = useRef<SVGPathElement>(null);
-  const wavePath3 = useRef<SVGPathElement>(null);
+  const trackRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const leftLabelRef = useRef<HTMLSpanElement>(null);
   const rightLabelRef = useRef<HTMLSpanElement>(null);
-  const glowRef = useRef<HTMLDivElement>(null);
   const [isAnimating, setIsAnimating] = useState(false);
+  const animFrameRef = useRef<number>(0);
 
-  // Idle wave animation — gentle breathing effect on the blob
+  // Water simulation state
+  const waterRef = useRef({
+    // Position of the liquid mass center (0 = left, 1 = right)
+    position: value === 'left' ? 0 : 1,
+    velocity: 0,
+    // Array of wave amplitudes for surface ripples
+    wavePoints: new Array(60).fill(0),
+    waveVelocities: new Array(60).fill(0),
+    // Splash particles
+    splashes: [] as { x: number; y: number; vx: number; vy: number; life: number; size: number }[],
+    // Idle wave phase
+    idlePhase: 0,
+  });
+
+  // ── Canvas rendering loop ──────────────────────────────
   useEffect(() => {
-    if (!svgRef.current || !wavePath1.current || !wavePath2.current || !wavePath3.current) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d')!;
+    const W = 240;
+    const H = 60;
+    canvas.width = W * 2; // retina
+    canvas.height = H * 2;
+    ctx.scale(2, 2);
 
-    // Wave 1 — slow, large
-    gsap.to(wavePath1.current, {
-      attr: {
-        d: value === 'left'
-          ? 'M0,25 C30,18 60,32 90,25 C120,18 150,32 180,25 L180,50 L0,50 Z'
-          : 'M0,25 C30,32 60,18 90,25 C120,32 150,18 180,25 L180,50 L0,50 Z'
-      },
-      duration: 2.5,
-      ease: 'sine.inOut',
-      repeat: -1,
-      yoyo: true,
-    });
+    const water = waterRef.current;
+    const DAMPING = 0.92;
+    const SPREAD = 0.15;
+    const TENSION = 0.012;
 
-    // Wave 2 — medium speed
-    gsap.to(wavePath2.current, {
-      attr: {
-        d: value === 'left'
-          ? 'M0,28 C40,22 80,34 120,28 C140,22 160,30 180,28 L180,50 L0,50 Z'
-          : 'M0,28 C40,34 80,22 120,28 C140,34 160,26 180,28 L180,50 L0,50 Z'
-      },
-      duration: 1.8,
-      ease: 'sine.inOut',
-      repeat: -1,
-      yoyo: true,
-      delay: 0.3,
-    });
+    function render() {
+      ctx.clearRect(0, 0, W, H);
 
-    // Wave 3 — fast, subtle
-    gsap.to(wavePath3.current, {
-      attr: {
-        d: value === 'left'
-          ? 'M0,30 C20,26 50,34 80,30 C110,26 150,34 180,30 L180,50 L0,50 Z'
-          : 'M0,30 C20,34 50,26 80,30 C110,34 150,26 180,30 L180,50 L0,50 Z'
-      },
-      duration: 1.2,
-      ease: 'sine.inOut',
-      repeat: -1,
-      yoyo: true,
-      delay: 0.6,
-    });
-  }, [value]);
+      // Update wave physics
+      const numPoints = water.wavePoints.length;
+      for (let i = 0; i < numPoints; i++) {
+        // Spring force toward 0
+        const force = -TENSION * water.wavePoints[i];
+        water.waveVelocities[i] += force;
+        water.waveVelocities[i] *= DAMPING;
+        water.wavePoints[i] += water.waveVelocities[i];
+      }
 
+      // Spread waves between neighbors (multiple passes for smooth propagation)
+      for (let pass = 0; pass < 3; pass++) {
+        const deltas = new Array(numPoints).fill(0);
+        for (let i = 0; i < numPoints; i++) {
+          if (i > 0) {
+            deltas[i] += SPREAD * (water.wavePoints[i] - water.wavePoints[i - 1]);
+            water.waveVelocities[i - 1] += SPREAD * (water.wavePoints[i] - water.wavePoints[i - 1]);
+          }
+          if (i < numPoints - 1) {
+            deltas[i] += SPREAD * (water.wavePoints[i] - water.wavePoints[i + 1]);
+            water.waveVelocities[i + 1] += SPREAD * (water.wavePoints[i] - water.wavePoints[i + 1]);
+          }
+        }
+        for (let i = 0; i < numPoints; i++) {
+          water.wavePoints[i] -= deltas[i] * 0.5;
+        }
+      }
+
+      // Idle wave animation (gentle sloshing)
+      water.idlePhase += 0.02;
+
+      // Compute liquid position on track
+      const liquidX = 8 + water.position * (W - 112);
+      const liquidW = 96;
+      const liquidH = 44;
+      const liquidY = (H - liquidH) / 2;
+      const liquidR = liquidH / 2;
+
+      // ── Draw liquid body with wave surface ──────────────
+      // Create the liquid shape path
+      ctx.save();
+
+      // Draw filled liquid body
+      const gradient = ctx.createLinearGradient(liquidX, liquidY, liquidX, liquidY + liquidH);
+      gradient.addColorStop(0, '#e8c06a');
+      gradient.addColorStop(0.3, '#d4a853');
+      gradient.addColorStop(0.7, '#c49a45');
+      gradient.addColorStop(1, '#a67830');
+
+      ctx.beginPath();
+
+      // Build wave-surfaced shape
+      const surfaceY = liquidY + 6; // Where waves sit
+      const baseY = liquidY + liquidH;
+
+      // Start from bottom-left with rounded corner
+      ctx.moveTo(liquidX + liquidR, baseY);
+      ctx.lineTo(liquidX + liquidW - liquidR, baseY);
+      // Bottom-right rounded corner
+      ctx.arc(liquidX + liquidW - liquidR, baseY - liquidR, liquidR, Math.PI / 2, 0, true);
+      // Right side up to wave surface
+      ctx.lineTo(liquidX + liquidW, surfaceY + 4);
+
+      // Top surface with wave displacement
+      for (let i = numPoints - 1; i >= 0; i--) {
+        const t = i / (numPoints - 1);
+        const wx = liquidX + t * liquidW;
+        // Combine wave simulation with idle sloshing
+        const idle = Math.sin(water.idlePhase + t * Math.PI * 3) * 1.2
+          + Math.sin(water.idlePhase * 0.7 + t * Math.PI * 5) * 0.6;
+        const waveDisplacement = water.wavePoints[i] + idle;
+        const wy = surfaceY + waveDisplacement;
+        if (i === numPoints - 1) {
+          ctx.lineTo(wx, wy);
+        } else {
+          // Smooth curve between points
+          const nextT = (i + 1) / (numPoints - 1);
+          const nextX = liquidX + nextT * liquidW;
+          const nextIdle = Math.sin(water.idlePhase + nextT * Math.PI * 3) * 1.2
+            + Math.sin(water.idlePhase * 0.7 + nextT * Math.PI * 5) * 0.6;
+          const nextY = surfaceY + water.wavePoints[i + 1] + nextIdle;
+          const cpx = (wx + nextX) / 2;
+          ctx.quadraticCurveTo(nextX, nextY, cpx, (wy + nextY) / 2);
+        }
+      }
+
+      // Left side down
+      ctx.lineTo(liquidX, surfaceY + 4);
+      // Bottom-left rounded corner
+      ctx.arc(liquidX + liquidR, baseY - liquidR, liquidR, Math.PI, Math.PI / 2, true);
+
+      ctx.closePath();
+      ctx.fillStyle = gradient;
+      ctx.fill();
+
+      // ── Light reflection on surface ─────────────────────
+      ctx.beginPath();
+      for (let i = 0; i < numPoints; i++) {
+        const t = i / (numPoints - 1);
+        const wx = liquidX + t * liquidW;
+        const idle = Math.sin(water.idlePhase + t * Math.PI * 3) * 1.2
+          + Math.sin(water.idlePhase * 0.7 + t * Math.PI * 5) * 0.6;
+        const wy = surfaceY + water.wavePoints[i] + idle;
+        if (i === 0) ctx.moveTo(wx, wy);
+        else ctx.lineTo(wx, wy);
+      }
+      ctx.strokeStyle = 'rgba(255, 240, 200, 0.5)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // ── Highlight (specular reflection) ─────────────────
+      const highlightGrad = ctx.createLinearGradient(liquidX, liquidY, liquidX, liquidY + liquidH * 0.4);
+      highlightGrad.addColorStop(0, 'rgba(255, 245, 210, 0.45)');
+      highlightGrad.addColorStop(1, 'rgba(255, 245, 210, 0)');
+
+      ctx.beginPath();
+      ctx.ellipse(liquidX + liquidW / 2, surfaceY + 8, liquidW * 0.35, 6, 0, 0, Math.PI * 2);
+      ctx.fillStyle = highlightGrad;
+      ctx.fill();
+
+      // ── Splash particles ────────────────────────────────
+      ctx.fillStyle = '#e8c06a';
+      for (let i = water.splashes.length - 1; i >= 0; i--) {
+        const p = water.splashes[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += 0.15; // gravity
+        p.life -= 0.02;
+        if (p.life <= 0) {
+          water.splashes.splice(i, 1);
+          continue;
+        }
+        ctx.globalAlpha = p.life * 0.8;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+
+      // ── Caustic light ripples inside liquid ─────────────
+      ctx.save();
+      ctx.globalAlpha = 0.06;
+      ctx.fillStyle = '#fff';
+      for (let i = 0; i < 5; i++) {
+        const cx = liquidX + 15 + i * (liquidW - 30) / 4;
+        const cy = liquidY + liquidH * 0.55 + Math.sin(water.idlePhase * 1.3 + i * 1.8) * 3;
+        const cr = 3 + Math.sin(water.idlePhase * 0.9 + i * 2.5) * 1.5;
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, cr * 1.5, cr, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+
+      ctx.restore();
+
+      animFrameRef.current = requestAnimationFrame(render);
+    }
+
+    animFrameRef.current = requestAnimationFrame(render);
+    return () => cancelAnimationFrame(animFrameRef.current);
+  }, []);
+
+  // ── Handle switch ──────────────────────────────────────
   const handleSwitch = useCallback((newValue: 'left' | 'right') => {
     if (isAnimating || newValue === value) return;
     setIsAnimating(true);
 
-    const blob = blobRef.current;
-    const glow = glowRef.current;
-    const leftEl = leftLabelRef.current;
-    const rightEl = rightLabelRef.current;
-    if (!blob || !glow || !leftEl || !rightEl) return;
-
+    const water = waterRef.current;
     const isGoingRight = newValue === 'right';
-    const tl = gsap.timeline({
+    const targetPos = isGoingRight ? 1 : 0;
+
+    // Spawn splash particles at current position
+    const spawnX = 8 + water.position * (240 - 112) + 48;
+    for (let i = 0; i < 8; i++) {
+      water.splashes.push({
+        x: spawnX + (Math.random() - 0.5) * 40,
+        y: 12 + Math.random() * 5,
+        vx: (isGoingRight ? 1 : -1) * (Math.random() * 2 + 1),
+        vy: -(Math.random() * 3 + 1.5),
+        life: 0.6 + Math.random() * 0.4,
+        size: 1.5 + Math.random() * 2,
+      });
+    }
+
+    // Agitate waves dramatically — simulate water sloshing
+    const numPoints = water.wavePoints.length;
+    for (let i = 0; i < numPoints; i++) {
+      const t = i / (numPoints - 1);
+      // Create a directional wave — water piles up on the leading edge
+      const dirForce = isGoingRight
+        ? Math.sin(t * Math.PI) * 6  // Forward wave
+        : Math.sin((1 - t) * Math.PI) * 6;
+      water.waveVelocities[i] += dirForce * (0.5 + Math.random() * 0.5);
+    }
+
+    // Animate position with GSAP
+    gsap.to(water, {
+      position: targetPos,
+      duration: 0.5,
+      ease: 'power2.inOut',
+      onUpdate: () => {
+        // Keep agitating waves during movement
+        const progress = Math.abs(water.position - (isGoingRight ? 0 : 1));
+        const center = Math.floor(progress * (numPoints - 1));
+        // Disturb wave at leading edge
+        const leadIdx = isGoingRight
+          ? Math.min(center + 10, numPoints - 1)
+          : Math.max(center - 10, 0);
+        if (water.wavePoints[leadIdx] !== undefined) {
+          water.waveVelocities[leadIdx] += (isGoingRight ? -2 : 2) * (0.3 + Math.random() * 0.4);
+        }
+      },
       onComplete: () => {
+        // Arrival splash — ripple from impact side
+        const impactIdx = isGoingRight ? numPoints - 5 : 5;
+        for (let i = -4; i <= 4; i++) {
+          const idx = impactIdx + i;
+          if (idx >= 0 && idx < numPoints) {
+            water.waveVelocities[idx] += (4 - Math.abs(i)) * 1.5;
+          }
+        }
+        // More splash particles at landing
+        const landX = 8 + targetPos * (240 - 112) + 48;
+        for (let i = 0; i < 6; i++) {
+          water.splashes.push({
+            x: landX + (Math.random() - 0.5) * 30,
+            y: 10 + Math.random() * 4,
+            vx: (Math.random() - 0.5) * 3,
+            vy: -(Math.random() * 2.5 + 1),
+            life: 0.5 + Math.random() * 0.3,
+            size: 1 + Math.random() * 1.5,
+          });
+        }
+
         onChange(newValue);
         setIsAnimating(false);
-      }
+      },
     });
 
-    // 1. Squish blob (stretch in direction of travel, compress vertically)
-    tl.to(blob, {
-      scaleX: 1.35,
-      scaleY: 0.75,
-      duration: 0.15,
-      ease: 'power2.in',
-    })
-    // 2. Slide + wobble glow
-    .to(blob, {
-      x: isGoingRight ? '100%' : '0%',
-      duration: 0.4,
-      ease: 'power3.inOut',
-    }, '-=0.05')
-    .to(glow, {
-      x: isGoingRight ? '100%' : '0%',
-      opacity: 1,
-      duration: 0.4,
-      ease: 'power3.inOut',
-    }, '<')
-    // 3. Overshoot + settle (elastic bounce)
-    .to(blob, {
-      scaleX: 0.9,
-      scaleY: 1.12,
-      duration: 0.15,
-      ease: 'power2.out',
-    })
-    .to(blob, {
-      scaleX: 1.05,
-      scaleY: 0.96,
-      duration: 0.12,
-      ease: 'sine.inOut',
-    })
-    .to(blob, {
-      scaleX: 1,
-      scaleY: 1,
-      duration: 0.2,
-      ease: 'elastic.out(1.2, 0.4)',
-    })
-    .to(glow, {
-      opacity: 0.5,
-      duration: 0.3,
-    }, '<');
-
     // Label color transitions
-    tl.to(leftEl, {
-      color: isGoingRight ? 'rgba(205,170,128,0.5)' : '#1a1207',
-      duration: 0.3,
-    }, 0.1);
-    tl.to(rightEl, {
-      color: isGoingRight ? '#1a1207' : 'rgba(205,170,128,0.5)',
-      duration: 0.3,
-    }, 0.1);
+    const leftEl = leftLabelRef.current;
+    const rightEl = rightLabelRef.current;
+    if (leftEl && rightEl) {
+      gsap.to(leftEl, {
+        color: isGoingRight ? 'rgba(205,170,128,0.5)' : '#cdaa80',
+        duration: 0.35,
+      });
+      gsap.to(rightEl, {
+        color: isGoingRight ? '#cdaa80' : 'rgba(205,170,128,0.5)',
+        duration: 0.35,
+      });
+    }
   }, [isAnimating, value, onChange]);
 
   const isLeft = value === 'left';
 
   return (
-    <div className="flex items-center justify-center gap-5 select-none" ref={containerRef}>
+    <div className="flex items-center justify-center gap-5 select-none">
       {/* Left Label */}
       <span
         ref={leftLabelRef}
         onClick={() => handleSwitch('left')}
         className="text-[15px] md:text-[17px] font-serif font-semibold tracking-wide cursor-pointer transition-colors duration-300 min-w-[130px] text-right"
-        style={{ color: isLeft ? '#1a1207' : 'rgba(205,170,128,0.5)' }}
+        style={{ color: isLeft ? '#cdaa80' : 'rgba(205,170,128,0.5)' }}
       >
         {leftLabel}
       </span>
 
       {/* Slider Track */}
       <div
-        className="relative w-[200px] h-[52px] rounded-full cursor-pointer overflow-hidden"
+        ref={trackRef}
+        className="relative w-[240px] h-[60px] rounded-full cursor-pointer overflow-hidden"
         style={{
-          background: 'linear-gradient(135deg, rgba(15,30,63,0.9) 0%, rgba(10,21,46,0.95) 100%)',
-          boxShadow: 'inset 0 2px 12px rgba(0,0,0,0.5), 0 4px 20px rgba(0,0,0,0.3), 0 0 0 1px rgba(205,170,128,0.15)',
+          background: 'linear-gradient(180deg, rgba(8,18,40,0.95) 0%, rgba(12,24,50,0.98) 100%)',
+          boxShadow: 'inset 0 3px 16px rgba(0,0,0,0.6), inset 0 -2px 8px rgba(0,0,0,0.3), 0 4px 24px rgba(0,0,0,0.35), 0 0 0 1px rgba(205,170,128,0.12)',
         }}
         onClick={() => handleSwitch(isLeft ? 'right' : 'left')}
       >
-        {/* Inner subtle border highlight */}
+        {/* Inner glass edge */}
         <div className="absolute inset-[1px] rounded-full pointer-events-none"
           style={{
-            background: 'linear-gradient(180deg, rgba(205,170,128,0.08) 0%, transparent 50%)',
+            background: 'linear-gradient(180deg, rgba(205,170,128,0.06) 0%, transparent 40%)',
           }}
         />
 
-        {/* Ambient glow behind blob */}
-        <div
-          ref={glowRef}
-          className="absolute top-1/2 -translate-y-1/2 w-[92px] h-[42px] rounded-full pointer-events-none"
-          style={{
-            left: '5px',
-            transform: `translateX(${isLeft ? '0%' : '100%'}) translateY(-50%)`,
-            background: 'radial-gradient(ellipse at center, rgba(205,170,128,0.25) 0%, transparent 70%)',
-            filter: 'blur(8px)',
-            opacity: 0.5,
-          }}
+        {/* Canvas for water simulation */}
+        <canvas
+          ref={canvasRef}
+          className="absolute inset-0 w-full h-full pointer-events-none"
+          style={{ borderRadius: '9999px' }}
         />
-
-        {/* The Liquid Blob */}
-        <div
-          ref={blobRef}
-          className="absolute top-[5px] left-[5px] w-[92px] h-[42px] rounded-full"
-          style={{
-            transform: `translateX(${isLeft ? '0%' : 'calc(200px - 92px - 10px)'})`,
-            transformOrigin: 'center center',
-          }}
-        >
-          {/* Blob base with golden gradient */}
-          <div
-            className="absolute inset-0 rounded-full"
-            style={{
-              background: 'linear-gradient(135deg, #d4a853 0%, #c49a45 30%, #b8893c 60%, #a67830 100%)',
-              boxShadow: '0 2px 12px rgba(196,154,69,0.4), inset 0 1px 2px rgba(255,220,150,0.3), inset 0 -1px 2px rgba(0,0,0,0.15)',
-            }}
-          />
-
-          {/* Metallic sheen overlay */}
-          <div
-            className="absolute inset-0 rounded-full"
-            style={{
-              background: 'linear-gradient(180deg, rgba(255,230,160,0.35) 0%, rgba(255,230,160,0.05) 40%, transparent 60%, rgba(0,0,0,0.08) 100%)',
-            }}
-          />
-
-          {/* SVG Liquid Waves */}
-          <svg
-            ref={svgRef}
-            viewBox="0 0 180 50"
-            preserveAspectRatio="none"
-            className="absolute inset-0 w-full h-full rounded-full overflow-hidden"
-            style={{ mixBlendMode: 'soft-light' }}
-          >
-            <defs>
-              <clipPath id="blobClip">
-                <rect x="0" y="0" width="180" height="50" rx="25" ry="25" />
-              </clipPath>
-            </defs>
-            <g clipPath="url(#blobClip)">
-              {/* Wave Layer 1 — deep, slow */}
-              <path
-                ref={wavePath1}
-                d="M0,30 C30,24 60,36 90,30 C120,24 150,36 180,30 L180,50 L0,50 Z"
-                fill="rgba(255,240,200,0.12)"
-              />
-              {/* Wave Layer 2 — mid-depth */}
-              <path
-                ref={wavePath2}
-                d="M0,32 C40,28 80,36 120,32 C140,28 160,34 180,32 L180,50 L0,50 Z"
-                fill="rgba(255,230,180,0.1)"
-              />
-              {/* Wave Layer 3 — surface, fast */}
-              <path
-                ref={wavePath3}
-                d="M0,34 C20,30 50,38 80,34 C110,30 150,38 180,34 L180,50 L0,50 Z"
-                fill="rgba(255,245,220,0.08)"
-              />
-            </g>
-          </svg>
-
-          {/* Subtle floating particles */}
-          <div className="absolute inset-0 rounded-full overflow-hidden pointer-events-none">
-            <div className="liquid-particle absolute w-1 h-1 rounded-full bg-white/20" style={{ top: '35%', left: '20%' }} />
-            <div className="liquid-particle absolute w-0.5 h-0.5 rounded-full bg-white/15" style={{ top: '55%', left: '60%' }} />
-            <div className="liquid-particle absolute w-[3px] h-[3px] rounded-full bg-white/10" style={{ top: '40%', left: '75%' }} />
-          </div>
-        </div>
       </div>
 
       {/* Right Label */}
@@ -258,23 +349,10 @@ export function LiquidSlider({ leftLabel, rightLabel, value, onChange }: LiquidS
         ref={rightLabelRef}
         onClick={() => handleSwitch('right')}
         className="text-[15px] md:text-[17px] font-serif font-semibold tracking-wide cursor-pointer transition-colors duration-300 min-w-[130px] text-left"
-        style={{ color: isLeft ? 'rgba(205,170,128,0.5)' : '#1a1207' }}
+        style={{ color: isLeft ? 'rgba(205,170,128,0.5)' : '#cdaa80' }}
       >
         {rightLabel}
       </span>
-
-      {/* Particle floating animation keyframes */}
-      <style dangerouslySetInnerHTML={{ __html: `
-        @keyframes liquidFloat {
-          0%, 100% { transform: translateY(0px) translateX(0px); opacity: 0.2; }
-          25% { transform: translateY(-3px) translateX(2px); opacity: 0.4; }
-          50% { transform: translateY(-1px) translateX(-1px); opacity: 0.15; }
-          75% { transform: translateY(-4px) translateX(1px); opacity: 0.35; }
-        }
-        .liquid-particle:nth-child(1) { animation: liquidFloat 3s ease-in-out infinite; }
-        .liquid-particle:nth-child(2) { animation: liquidFloat 2.5s ease-in-out infinite 0.5s; }
-        .liquid-particle:nth-child(3) { animation: liquidFloat 3.5s ease-in-out infinite 1s; }
-      `}} />
     </div>
   );
 }

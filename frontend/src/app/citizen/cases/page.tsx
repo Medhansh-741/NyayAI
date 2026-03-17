@@ -1,28 +1,26 @@
 'use client';
 
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import gsap from 'gsap';
 import { useGSAP } from '@gsap/react';
 import { Footer } from '../../../../components/footer';
 import { Sidebar } from '../../../../components/sidebar';
 import { useTheme } from '../../../../components/themeprovider';
-import axios from 'axios';
-import { useEffect } from 'react';
+import { supabase } from '@/lib/supabase/client';
+import { getCitizenCases } from '@/lib/db/cases';
+import type { Database } from '@/types/supabase';
 
-// Define the Case interface
-interface Case {
-  id: number;
-  case_id: string;
-  title: string;
-  description: string;
-  domain: string;
-  date: string;
-  status: string;
-  metadata_json?: string;
-  icons?: string[];
+type CaseRow = Database['public']['Tables']['cases']['Row'];
+
+function formatUiStatus(caseRow: CaseRow): string {
+  if (caseRow.status === 'completed') return 'Case Completed'
+  if (caseRow.status === 'lawyer_matched') return 'Lawyer Matched'
+  if (caseRow.status === 'seeking_lawyer') return 'Seeking Lawyer'
+  if (caseRow.status === 'analysis_complete') return 'AI Analysis Complete'
+  if (caseRow.status === 'analysis_pending') return 'Under AI Analysis'
+  if (caseRow.status === 'draft') return 'Draft'
+  return (caseRow.status ?? 'Submitted').replace(/_/g, ' ')
 }
-
-// Example cases data
 
 export default function CaseHistory() {
   const pageRef = useRef<HTMLDivElement | null>(null);
@@ -30,13 +28,36 @@ export default function CaseHistory() {
   const searchContainerRef = useRef<HTMLDivElement | null>(null);
   const searchIconRef = useRef<SVGSVGElement | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [clickedCardId, setClickedCardId] = useState<number | null>(null);
+  const [clickedCardId, setClickedCardId] = useState<string | null>(null);
   const [sortOption, setSortOption] = useState<'latest' | 'oldest' | 'title_asc' | 'title_desc'>('latest');
   const [cases, setCases] = useState<Case[]>([]);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
 
   const { theme, mounted } = useTheme();
   const isDark = mounted && theme === 'dark';
+  const [dbCases, setDbCases] = useState<CaseRow[]>([])
+  const [dbError, setDbError] = useState<string | null>(null)
+
+  useEffect(() => {
+    async function load() {
+      setDbError(null)
+      const { data: authData, error: authError } = await supabase.auth.getUser()
+      if (authError || !authData.user) {
+        setDbError('Please log in to view your cases.')
+        setDbCases([])
+        return
+      }
+
+      const { data, error } = await getCitizenCases(authData.user.id)
+      if (error) {
+        setDbError(error.message)
+        setDbCases([])
+      } else {
+        setDbCases(data ?? [])
+      }
+    }
+    void load()
+  }, [])
 
   const sortOptions: Array<{ label: string; value: typeof sortOption }> = [
     { label: 'Latest Case', value: 'latest' },
@@ -45,8 +66,18 @@ export default function CaseHistory() {
     { label: 'Title Z-A', value: 'title_desc' },
   ];
 
-  // Filter cases based on search query
-  const filteredCases = cases.filter(c =>
+  const uiCases = useMemo(() => {
+    return dbCases.map((c) => ({
+      id: c.id,
+      title: c.title ?? 'Untitled Case',
+      description: c.incident_description ?? 'No description provided.',
+      domain: (c.domain ?? 'other').replace(/_/g, ' '),
+      date: c.created_at ? new Date(c.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Unknown',
+      status: formatUiStatus(c),
+    }))
+  }, [dbCases])
+
+  const filteredCases = uiCases.filter(c =>
     c.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
     c.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
     c.domain.toLowerCase().includes(searchQuery.toLowerCase())
@@ -236,6 +267,11 @@ export default function CaseHistory() {
 
         {/* Scrollable Cases List - Updated with Yellow Card Theme */}
         <div ref={cardsWrapperRef} className="flex-1 overflow-y-auto pr-2 space-y-4 custom-scrollbar">
+          {dbError && (
+            <div className="rounded-xl border border-dashed border-red-400/30 bg-white/70 dark:bg-[#12284f]/50 p-4 text-sm text-red-500 dark:text-red-300">
+              {dbError}
+            </div>
+          )}
           {sortedCases.map((c) => (
             <div
               key={c.id}
@@ -298,7 +334,7 @@ export default function CaseHistory() {
 
           {filteredCases.length === 0 && (
             <div className="text-center py-12 text-[#443831]/60 dark:text-white/50">
-              No cases found matching your search.
+              {dbError ? 'No cases to show.' : 'No cases found matching your search.'}
             </div>
           )}
         </div>

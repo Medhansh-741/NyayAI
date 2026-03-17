@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { useGSAP } from '@gsap/react'
 import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
-import { BadgeCheck, Mail, MapPin, Phone, SquarePen, Menu, Home, Compass, Store } from 'lucide-react'
+import { BadgeCheck, Mail, MapPin, Phone, SquarePen, Menu, Home, Compass, Store, Gavel } from 'lucide-react'
 import { Sidebar } from '../../../../components/sidebar'
 import type { NavItem } from '../../../../components/sidebar'
 import type { Database } from '@/types/supabase'
@@ -58,6 +58,7 @@ const LAWYER_NAV_ITEMS: NavItem[] = [
   { id: 'home', icon: Home, label: 'Home', href: '/lawyerside/home' },
   { id: 'explorer', icon: Compass, label: 'Explorer', href: '/lawyerside/explorer' },
   { id: 'marketplace', icon: Store, label: 'Marketplace', href: '/lawyerside/marketplace' },
+  { id: 'my-cases', icon: Gavel, label: 'My Cases', href: '/lawyerside/my-cases' },
 ]
 
 function formatCurrency(value: number | null | undefined, fallback = 'Not set') {

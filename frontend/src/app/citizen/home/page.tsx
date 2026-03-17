@@ -5,6 +5,11 @@ import { Sidebar } from '../../../../components/sidebar';
 import gsap from 'gsap';
 
 import axios from 'axios';
+import { supabase } from '@/lib/supabase/client';
+import { upsertChatbotCase } from '@/lib/db/cases';
+import { setActiveCaseForUser } from '@/lib/db/sessions';
+
+const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001').replace(/\/$/, '')
 
 interface Message {
   id: string;
@@ -44,7 +49,8 @@ export default function CitizenHome() {
   const headerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputBarRef = useRef<HTMLDivElement>(null);
-  const iconsRef = useRef<HTMLDivElement>(null);  useEffect(() => {
+  const iconsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
     // Scroll to bottom whenever messages change or loading state changes
     scrollToBottom();
   }, [messages, isLoading]);
@@ -97,7 +103,23 @@ export default function CitizenHome() {
     setIsLoading(true);
 
     try {
-      const response = await axios.post('http://localhost:8001/analyze', {
+      const { data: authData } = await supabase.auth.getUser()
+      const user = authData.user
+      if (!user) {
+        const errorMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          role: 'ai',
+          content: 'Please log in to save your case and continue chatting.',
+          timestamp: new Date(),
+          isError: true,
+          type: 'text'
+        };
+        setMessages(prev => [...prev, errorMessage]);
+        setIsLoading(false)
+        return
+      }
+
+      const response = await axios.post(`${BACKEND_URL}/analyze`, {
         case_id: caseId,
         raw_narrative: textToSend,
         language_preference: "english",
@@ -108,6 +130,39 @@ export default function CitizenHome() {
       const result = response.data;
       const newCaseId = result.case_state?.case_id;
       if (newCaseId) setCaseId(newCaseId);
+
+      if (newCaseId) {
+        const intakeStatus: string | undefined = result.intake_status
+        const isComplete = intakeStatus === 'complete'
+        const lawyerRecommended = !!result.case_state?.action_plan?.lawyer_recommended
+
+        const nextStatus =
+          lawyerRecommended && isComplete
+            ? 'seeking_lawyer'
+            : isComplete
+              ? 'analysis_complete'
+              : 'analysis_pending'
+
+        await upsertChatbotCase({
+          caseId: newCaseId,
+          citizenId: user.id,
+          domain: result.case_state?.legal_mapping?.primary_domain ?? 'other',
+          title: result.case_state?.structured_facts?.case_title ?? 'Citizen Chatbot Case',
+          incident_description: result.case_state?.raw_narrative ?? textToSend,
+          status: nextStatus,
+          is_seeking_lawyer: lawyerRecommended && isComplete,
+          confidence_score: typeof result.case_state?.legal_mapping?.legal_standing_score === 'number'
+            ? result.case_state.legal_mapping.legal_standing_score
+            : null,
+          confirmed_facts: result.case_state?.structured_facts ?? null,
+          applicable_laws: result.case_state?.legal_mapping ?? null,
+          recommended_strategy: result.case_state?.action_plan ?? null,
+          case_brief: result.case_state?.case_brief ?? null,
+          evidence_inventory: result.case_state?.evidence_inventory ?? null,
+        })
+
+        await setActiveCaseForUser(user.id, newCaseId)
+      }
 
       let aiMessage: Message = {
         id: (Date.now() + 1).toString(),
