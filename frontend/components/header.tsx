@@ -7,6 +7,7 @@ import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { useGSAP } from "@gsap/react";
 import { useTheme } from "./themeprovider";
 import ThemeToggle from "./Themetogglebutton";
+import LoginButton from "./login-button";
 
 if (typeof window !== "undefined") {
   gsap.registerPlugin(ScrollTrigger, useGSAP);
@@ -55,19 +56,13 @@ const DEFAULT_NAV_ITEMS: NavItem[] = [
   { label: "VISIT", href: "/visit" },
 ];
 
-const DefaultNineDotIcon = () => (
-  <button className="grid grid-cols-3 gap-0.5 p-1 w-6 h-6 items-center justify-center opacity-70 hover:opacity-100 transition-opacity">
-    {Array.from({ length: 9 }).map((_, i) => (
-      <div key={i} className="w-1 h-1 rounded-full bg-current" />
-    ))}
-  </button>
-);
+
 
 export default function Header({
   logoText = "LOURVE",
   navLinks = DEFAULT_NAV_ITEMS,
   rightAction,
-  rightIcon = <DefaultNineDotIcon />,
+  rightIcon,
   themeColors = DEFAULT_THEME,
 }: HeaderProps) {
   const headerRef = useRef<HTMLElement>(null);
@@ -201,7 +196,7 @@ export default function Header({
           )}
 
           <div className="hidden md:block">
-            {rightIcon}
+            {rightIcon || <LoginButton hoverTextColor={resolvedTheme.bgScrolled} />}
           </div>
 
           <button
@@ -233,6 +228,11 @@ export default function Header({
                 {link.label}
               </Link>
             ))}
+            
+            <div className="mt-4 flex justify-center border-t border-current/10 pt-4">
+              {rightIcon || <LoginButton hoverTextColor={resolvedTheme.bgScrolled} />}
+            </div>
+
             {rightAction && (
               <div className="mt-4 pt-4 border-t border-current/10">
                 {rightAction}
