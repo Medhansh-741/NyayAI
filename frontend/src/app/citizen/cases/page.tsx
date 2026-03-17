@@ -9,6 +9,8 @@ import { useTheme } from '../../../../components/themeprovider';
 import { supabase } from '@/lib/supabase/client';
 import { getCitizenCases } from '@/lib/db/cases';
 import type { Database } from '@/types/supabase';
+import * as Dialog from '@radix-ui/react-dialog';
+import { acceptOffer, getCasePipelineForCitizen } from '@/lib/db/pipeline';
 
 type CaseRow = Database['public']['Tables']['cases']['Row'];
 
@@ -35,6 +37,11 @@ export default function CaseHistory() {
   const isDark = mounted && theme === 'dark';
   const [dbCases, setDbCases] = useState<CaseRow[]>([])
   const [dbError, setDbError] = useState<string | null>(null)
+  const [selectedCase, setSelectedCase] = useState<CaseRow | null>(null)
+  const [offersLoading, setOffersLoading] = useState(false)
+  const [offersError, setOffersError] = useState<string | null>(null)
+  const [offers, setOffers] = useState<Database['public']['Tables']['case_pipeline']['Row'][]>([])
+  const [acceptingOfferId, setAcceptingOfferId] = useState<string | null>(null)
 
   useEffect(() => {
     async function load() {
@@ -56,6 +63,52 @@ export default function CaseHistory() {
     }
     void load()
   }, [])
+
+  const openCaseDetails = async (caseId: string) => {
+    const caseRow = dbCases.find((c) => c.id === caseId) ?? null
+    setSelectedCase(caseRow)
+    setOffersError(null)
+    setOffers([])
+    if (!caseRow) return
+
+    setOffersLoading(true)
+    const { data: pipelineRows, error: pipelineErr } = await getCasePipelineForCitizen(caseRow.id)
+    if (pipelineErr) setOffersError(pipelineErr.message)
+    const rows = (pipelineRows ?? []) as Database['public']['Tables']['case_pipeline']['Row'][]
+    setOffers(rows.filter((r) => r.stage === 'offered'))
+    setOffersLoading(false)
+  }
+
+  const handleAcceptOffer = async (pipelineId: string) => {
+    if (!selectedCase) return
+    setOffersError(null)
+    setAcceptingOfferId(pipelineId)
+    const { data: authData, error: authError } = await supabase.auth.getUser()
+    if (authError || !authData.user) {
+      setOffersError('Please log in to accept offers.')
+      setAcceptingOfferId(null)
+      return
+    }
+
+    const { error } = await acceptOffer(pipelineId, selectedCase.id)
+    if (error) {
+      setOffersError(error.message)
+      setAcceptingOfferId(null)
+      return
+    }
+
+    // Refresh offers + the case list so the status updates in UI
+    const { data: pipelineRows, error: pipelineErr } = await getCasePipelineForCitizen(selectedCase.id)
+    if (pipelineErr) setOffersError(pipelineErr.message)
+    const rows = (pipelineRows ?? []) as Database['public']['Tables']['case_pipeline']['Row'][]
+    setOffers(rows.filter((r) => r.stage === 'offered'))
+
+    const { data: casesData, error: casesErr } = await getCitizenCases(authData.user.id)
+    if (casesErr) setDbError(casesErr.message)
+    else setDbCases(casesData ?? [])
+
+    setAcceptingOfferId(null)
+  }
 
   const sortOptions: Array<{ label: string; value: typeof sortOption }> = [
     { label: 'Latest Case', value: 'latest' },
@@ -297,12 +350,16 @@ export default function CaseHistory() {
                   <span>Date: {c.date}</span>
                 </div>
 
-                <div className="flex items-center gap-1 text-[#0f1e3f] font-bold text-sm hover:underline">
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); void openCaseDetails(c.id) }}
+                  className="flex items-center gap-1 text-[#0f1e3f] font-bold text-sm hover:underline"
+                >
                   View Details
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
                   </svg>
-                </div>
+                </button>
               </div>
             </div>
           ))}
@@ -313,6 +370,122 @@ export default function CaseHistory() {
             </div>
           )}
         </div>
+
+        <Dialog.Root open={!!selectedCase} onOpenChange={(open) => { if (!open) setSelectedCase(null) }}>
+          <Dialog.Portal>
+            <Dialog.Overlay className="fixed inset-0 bg-black/40 backdrop-blur-[1px] z-[9998]" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 w-[92vw] max-w-[760px] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white dark:bg-[#0a152e] border border-[#e3d4bf] dark:border-[#cdaa80]/25 shadow-2xl p-5 md:p-6 z-[9999]">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <Dialog.Title className="text-lg md:text-xl font-serif text-[#997953] dark:text-[#cdaa80]">
+                    {selectedCase?.title ?? 'Untitled Case'}
+                  </Dialog.Title>
+                  <Dialog.Description className="mt-1 text-sm font-sans text-[#5b4b3d] dark:text-white/70">
+                    {selectedCase ? selectedCase.domain.replace(/_/g, ' ') : ''}
+                  </Dialog.Description>
+                </div>
+                <Dialog.Close className="rounded-lg px-3 py-1.5 text-sm font-sans border border-[#d8c1a1] dark:border-[#cdaa80]/30 hover:bg-[#f9f4ec] dark:hover:bg-[#12284f]">
+                  Close
+                </Dialog.Close>
+              </div>
+
+              {selectedCase && (
+                <div className="mt-4 space-y-4">
+                  <div className="text-sm font-sans text-[#2f261f] dark:text-white/85 leading-relaxed">
+                    {selectedCase.incident_description ?? 'No description provided.'}
+                  </div>
+
+                  <div className="rounded-xl border border-[#e7d9c7] dark:border-[#cdaa80]/20 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-[11px] uppercase tracking-wide font-bold text-[#997953] dark:text-[#cdaa80]">
+                        Offers from lawyers
+                      </div>
+                    </div>
+
+                    {offersError && (
+                      <div className="mt-2 text-sm font-sans text-red-500">
+                        {offersError}
+                      </div>
+                    )}
+
+                    {offersLoading ? (
+                      <div className="mt-3 text-sm font-sans text-[#5b4b3d] dark:text-white/70">
+                        Loading offers…
+                      </div>
+                    ) : offers.length === 0 ? (
+                      <div className="mt-3 text-sm font-sans text-[#5b4b3d] dark:text-white/70">
+                        No offers yet.
+                      </div>
+                    ) : (
+                      <div className="mt-3 space-y-2">
+                        {offers.map((o) => (
+                          <div
+                            key={o.id}
+                            className="rounded-lg border border-[#e7d9c7] dark:border-[#cdaa80]/20 px-3 py-2 bg-[#fdf9f3] dark:bg-[#12284f]/70"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="text-sm font-sans text-[#2f261f] dark:text-white/85 font-medium">
+                                  {typeof o.offer_amount === 'number' ? `₹${o.offer_amount.toLocaleString('en-IN')}` : 'Offer received'}
+                                </div>
+                                {o.offer_message && (
+                                  <div className="mt-1 text-[12px] font-sans text-[#5b4b3d] dark:text-white/70 break-words">
+                                    {o.offer_message}
+                                  </div>
+                                )}
+                                <div className="mt-1 text-[11px] font-sans text-[#5b4b3d] dark:text-white/60">
+                                  {o.offer_sent_at ? new Date(o.offer_sent_at).toLocaleString('en-IN') : ''}
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => { void handleAcceptOffer(o.id) }}
+                                className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-sans border border-[#0f1e3f]/25 bg-[#0f1e3f] text-[#cdaa80] hover:bg-[#0f1e3f]/90 ${acceptingOfferId === o.id ? 'opacity-60 pointer-events-none' : ''}`}
+                              >
+                                {acceptingOfferId === o.id ? 'Accepting…' : 'Accept'}
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-xl border border-[#e7d9c7] dark:border-[#cdaa80]/20 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-[11px] uppercase tracking-wide font-bold text-[#997953] dark:text-[#cdaa80]">
+                        AI case draft (from chatbot)
+                      </div>
+                    </div>
+
+                    <div className="mt-3 space-y-3">
+                      <div className="text-[11px] uppercase tracking-wide font-bold text-[#0f1e3f]/60 dark:text-white/60">
+                        Case brief
+                      </div>
+                      <pre className="whitespace-pre-wrap break-words rounded-lg border border-[#e7d9c7] dark:border-[#cdaa80]/20 px-3 py-2 bg-[#fdf9f3] dark:bg-[#12284f]/70 text-[12px] font-sans text-[#2f261f] dark:text-white/85">
+                        {selectedCase?.case_brief ? JSON.stringify(selectedCase.case_brief, null, 2) : 'Not available yet.'}
+                      </pre>
+
+                      <div className="text-[11px] uppercase tracking-wide font-bold text-[#0f1e3f]/60 dark:text-white/60">
+                        Evidence inventory
+                      </div>
+                      <pre className="whitespace-pre-wrap break-words rounded-lg border border-[#e7d9c7] dark:border-[#cdaa80]/20 px-3 py-2 bg-[#fdf9f3] dark:bg-[#12284f]/70 text-[12px] font-sans text-[#2f261f] dark:text-white/85">
+                        {selectedCase?.evidence_inventory ? JSON.stringify(selectedCase.evidence_inventory, null, 2) : 'Not available yet.'}
+                      </pre>
+
+                      <div className="text-[11px] uppercase tracking-wide font-bold text-[#0f1e3f]/60 dark:text-white/60">
+                        Recommended strategy
+                      </div>
+                      <pre className="whitespace-pre-wrap break-words rounded-lg border border-[#e7d9c7] dark:border-[#cdaa80]/20 px-3 py-2 bg-[#fdf9f3] dark:bg-[#12284f]/70 text-[12px] font-sans text-[#2f261f] dark:text-white/85">
+                        {selectedCase?.recommended_strategy ? JSON.stringify(selectedCase.recommended_strategy, null, 2) : 'Not available yet.'}
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
 
         <style dangerouslySetInnerHTML={{
           __html: `

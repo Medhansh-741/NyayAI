@@ -9,6 +9,7 @@ import { BadgeCheck, ArrowLeft, FileText, Scale, Phone, Mail } from 'lucide-reac
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase/client';
 import { getActiveCaseForUser } from '@/lib/db/sessions';
+import { createBriefDispatch } from '@/lib/db/dispatches';
 
 // Register ScrollTrigger plugin
 if (typeof window !== 'undefined') {
@@ -129,6 +130,18 @@ export default function LawyerProfilePage({ params }: { params: Promise<{ id: st
         return
       }
 
+      const intro = typeof window !== 'undefined'
+        ? window.prompt(
+            'Write a short message for the lawyer (intro intent message):',
+            'I need urgent help. Looking for someone experienced in this domain.'
+          )
+        : null
+
+      if (!intro || intro.trim().length === 0) {
+        setRequestMsg('Request cancelled.')
+        return
+      }
+
       const { data: sessionRow } = await getActiveCaseForUser(authData.user.id)
       let activeCaseId = sessionRow?.active_case_id ?? null
 
@@ -148,27 +161,58 @@ export default function LawyerProfilePage({ params }: { params: Promise<{ id: st
         return
       }
 
-      const { error: pipelineErr } = await supabase
-        .from('case_pipeline')
-        .insert({
-          lawyer_id: lawyerId,
-          case_id: activeCaseId,
-          stage: 'offered',
-          offer_note: 'Citizen requested this lawyer to take up the case.',
-          offer_sent_at: new Date().toISOString(),
-        })
+      const { data: caseRow } = await supabase
+        .from('cases')
+        .select('id, title, domain, incident_description, budget_min, budget_max, preferred_state, preferred_district, case_brief, recommended_strategy, applicable_laws, confirmed_facts')
+        .eq('id', activeCaseId)
+        .maybeSingle()
 
-      if (pipelineErr) {
-        setRequestMsg(pipelineErr.message)
+      const { data: docs } = await supabase
+        .from('case_documents')
+        .select('file_name, file_url, document_type, created_at')
+        .eq('case_id', activeCaseId)
+        .order('created_at', { ascending: false })
+
+      const aiBrief = {
+        title: caseRow?.title ?? null,
+        domain: caseRow?.domain ?? null,
+        incident_description: caseRow?.incident_description ?? null,
+        case_brief: caseRow?.case_brief ?? null,
+        recommended_strategy: caseRow?.recommended_strategy ?? null,
+        applicable_laws: caseRow?.applicable_laws ?? null,
+        confirmed_facts: caseRow?.confirmed_facts ?? null,
+      }
+
+      const citizenInputs = {
+        budget_min: caseRow?.budget_min ?? undefined,
+        budget_max: caseRow?.budget_max ?? undefined,
+        urgency: 'HIGH' as const,
+        engagement_type: 'FULL_CASE' as const,
+        case_goal: 'Need legal assistance',
+        stage: 'INTAKE_COMPLETE',
+        preferred_language: 'HINDI',
+        communication_mode: 'CHAT_FIRST' as const,
+        notes: 'Need quick response',
+        preferred_state: caseRow?.preferred_state ?? undefined,
+        preferred_district: caseRow?.preferred_district ?? undefined,
+      }
+
+      const { error: dispatchErr } = await createBriefDispatch({
+        case_id: activeCaseId,
+        citizen_id: authData.user.id,
+        lawyer_id: lawyerId,
+        intro_message: intro.trim(),
+        ai_brief: aiBrief,
+        citizen_inputs: citizenInputs,
+        documents: docs ?? [],
+      })
+
+      if (dispatchErr) {
+        setRequestMsg(dispatchErr.message)
         return
       }
 
-      await supabase
-        .from('cases')
-        .update({ is_seeking_lawyer: false })
-        .eq('id', activeCaseId)
-
-      setRequestMsg('Request sent. The lawyer will see it in their Offered tab.')
+      setRequestMsg('Your case has been sent to the lawyer. You’ll receive a response within 24–48 hours.')
     } finally {
       setRequesting(false)
     }

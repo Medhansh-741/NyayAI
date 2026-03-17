@@ -15,6 +15,20 @@ import * as Dialog from '@radix-ui/react-dialog';
 type CaseRow = Database['public']['Tables']['cases']['Row'];
 type LawyerProfile = Database['public']['Tables']['lawyer_profiles']['Row'];
 type PipelineRow = Database['public']['Tables']['case_pipeline']['Row'];
+// NOTE: `brief_dispatches` is a new table; Supabase types may be stale locally.
+// We keep it typed narrowly here to avoid breaking the build.
+type BriefDispatchRow = {
+  id: string
+  case_id: string
+  citizen_id: string
+  lawyer_id: string
+  intro_message: string
+  ai_brief: unknown | null
+  citizen_inputs: unknown | null
+  documents: unknown | null
+  status: string
+  created_at: string | null
+}
 
 type CasePreview = Pick<
   CaseRow,
@@ -36,6 +50,11 @@ type LawyerProfilePreview = Pick<LawyerProfile, 'id' | 'full_name' | 'specialisa
 
 interface OfferedCase {
   pipeline: PipelineRow;
+  caseData: CasePreview;
+}
+
+interface IncomingDispatch {
+  dispatch: BriefDispatchRow;
   caseData: CasePreview;
 }
 
@@ -149,7 +168,7 @@ export default function LawyerCaseMarketplace() {
   const router = useRouter()
   const [lawyerProfile, setLawyerProfile] = useState<LawyerProfilePreview | null>(null)
   const [allCases, setAllCases]             = useState<CasePreview[]>([])
-  const [offeredCases, setOfferedCases]     = useState<OfferedCase[]>([])
+  const [incomingDispatches, setIncomingDispatches] = useState<IncomingDispatch[]>([])
   const [isLoading, setIsLoading]           = useState(true)
   const [offeredLoading, setOfferedLoading] = useState(true)
   const [dbError, setDbError]               = useState<string | null>(null)
@@ -160,7 +179,7 @@ export default function LawyerCaseMarketplace() {
   const [acceptingCaseId, setAcceptingCaseId] = useState<string | null>(null)
   const [now, setNow] = useState<number>(0)
   const [selectedAvailable, setSelectedAvailable] = useState<CasePreview | null>(null)
-  const [selectedOffered, setSelectedOffered] = useState<OfferedCase | null>(null)
+  const [selectedDispatch, setSelectedDispatch] = useState<IncomingDispatch | null>(null)
 
   const handleProfileClick = () => {
     router.push('/lawyerside/profile')
@@ -175,12 +194,58 @@ export default function LawyerCaseMarketplace() {
       return
     }
 
-    // Instant UI feedback: remove from Offered list
-    setOfferedCases((prev) => prev.filter((o) => o.pipeline.id !== pipelineId))
-    setSelectedOffered(null)
+    // Instant UI feedback handled by caller
 
     router.push('/lawyerside/my-cases')
   }, [router])
+
+  const handleSendOfferFromDispatch = useCallback(async (incoming: IncomingDispatch) => {
+    const offerAmountRaw = typeof window !== 'undefined'
+      ? window.prompt('Enter your offer amount (INR):', '25000')
+      : null
+    if (!offerAmountRaw) return
+    const offerAmount = Number(offerAmountRaw)
+    if (!Number.isFinite(offerAmount) || offerAmount <= 0) {
+      setOfferedError('Invalid offer amount.')
+      return
+    }
+
+    const offerMessage = typeof window !== 'undefined'
+      ? window.prompt('Message to citizen (offer details):', 'Scope, timeline, engagement type, and next steps...')
+      : null
+    if (!offerMessage) return
+
+    const { data: authData, error: authError } = await supabase.auth.getUser()
+    if (authError || !authData.user) {
+      setOfferedError('Not authenticated. Please log in.')
+      return
+    }
+
+    const { error: offerErr } = await supabase
+      .from('case_pipeline')
+      .insert({
+        case_id: incoming.caseData.id,
+        lawyer_id: authData.user.id,
+        stage: 'offered',
+        offer_amount: offerAmount,
+        offer_message: offerMessage,
+        offer_note: incoming.dispatch.intro_message,
+        offer_sent_at: new Date().toISOString(),
+      })
+
+    if (offerErr) {
+      setOfferedError(offerErr.message)
+      return
+    }
+
+    await (supabase as any)
+      .from('brief_dispatches')
+      .update({ status: 'archived' })
+      .eq('id', incoming.dispatch.id)
+
+    setIncomingDispatches((prev) => prev.filter((d) => d.dispatch.id !== incoming.dispatch.id))
+    setSelectedDispatch(null)
+  }, [])
 
   const handleAcceptAvailable = useCallback(async (caseId: string) => {
     const { data: authData, error: authError } = await supabase.auth.getUser()
@@ -299,46 +364,44 @@ export default function LawyerCaseMarketplace() {
       }
       setIsLoading(false)
 
-      // 5. Fetch this lawyer's offered/pipeline cases (Offered tab)
-      const { data: myPipeline, error: pipelineErr } = await supabase
-        .from('case_pipeline')
-        .select('*')
+      // 5. Fetch incoming brief dispatches (Inbox tab)
+      const { data: dispatchRows, error: dispatchErr } = await (supabase as any)
+        .from('brief_dispatches')
+        .select('id, case_id, citizen_id, lawyer_id, intro_message, ai_brief, citizen_inputs, documents, status, created_at')
         .eq('lawyer_id', user.id)
-        .eq('stage', 'offered')
+        .eq('status', 'sent')
         .order('created_at', { ascending: false })
 
-      if (pipelineErr) {
-        setOfferedError(pipelineErr.message)
+      if (dispatchErr) {
+        setOfferedError(dispatchErr.message)
         setOfferedLoading(false)
         return
       }
 
-      if (!myPipeline || myPipeline.length === 0) {
-        setOfferedCases([])
+      if (!dispatchRows || dispatchRows.length === 0) {
+        setIncomingDispatches([])
         setOfferedLoading(false)
         return
       }
 
-      // 6. Fetch the case details for each pipeline entry
-      const caseIds = myPipeline.map(p => p.case_id)
-      const { data: offeredCasesData, error: offCasesErr } = await supabase
+      const caseIds = (dispatchRows as BriefDispatchRow[]).map((d) => d.case_id)
+      const { data: caseRows, error: caseErr } = await supabase
         .from('cases')
-        // keep citizen anonymous for lawyers: do not fetch citizen_id
         .select('id, title, domain, status, state, district, incident_description, incident_date, budget_min, budget_max, confidence_score, created_at')
         .in('id', caseIds)
 
-      if (offCasesErr) {
-        setOfferedError(offCasesErr.message)
+      if (caseErr) {
+        setOfferedError(caseErr.message)
         setOfferedLoading(false)
         return
       }
 
-      const caseMap = new Map((offeredCasesData ?? []).map(c => [c.id, c]))
-      const merged: OfferedCase[] = myPipeline
-        .filter(p => caseMap.has(p.case_id))
-        .map(p => ({ pipeline: p, caseData: caseMap.get(p.case_id)! }))
+      const caseMap = new Map((caseRows ?? []).map((c) => [c.id, c]))
+      const merged: IncomingDispatch[] = (dispatchRows as BriefDispatchRow[])
+        .filter((d) => caseMap.has(d.case_id))
+        .map((d) => ({ dispatch: d, caseData: caseMap.get(d.case_id)! }))
 
-      setOfferedCases(merged)
+      setIncomingDispatches(merged)
     } catch (err) {
       console.error('Error fetching data:', err)
       setDbError('Unexpected error loading cases.')
@@ -364,6 +427,11 @@ export default function LawyerCaseMarketplace() {
         { event: '*', schema: 'public', table: 'case_pipeline' },
         () => { fetchData() }
       )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'brief_dispatches' },
+        () => { fetchData() }
+      )
       .subscribe()
 
     return () => { void supabase.removeChannel(channel) }
@@ -375,7 +443,9 @@ export default function LawyerCaseMarketplace() {
   }, [activeTab, selectedRecency])
 
   // ── Derived filter options (uses active list) ─────────
-  const activeCaseList = activeTab === 'left' ? allCases : offeredCases.map(o => o.caseData)
+  const activeCaseList = activeTab === 'left'
+    ? allCases
+    : incomingDispatches.map((d) => d.caseData)
 
   const domainOptions = useMemo(() => {
     const domains = new Set<string>()
@@ -406,9 +476,9 @@ export default function LawyerCaseMarketplace() {
     return result
   }, [allCases, selectedDomain, selectedRecency, selectedBudgetIndex, recencyOptions])
 
-  // ── Filtered results (Offered Cases) ───────────────────
-  const filteredOffered = useMemo(() => {
-    let result = [...offeredCases]
+  // ── Filtered results (Incoming Requests) ───────────────
+  const filteredDispatches = useMemo(() => {
+    let result = [...incomingDispatches]
 
     if (selectedDomain !== 'Legal Domain') {
       result = result.filter(o => o.caseData.domain === selectedDomain)
@@ -418,7 +488,7 @@ export default function LawyerCaseMarketplace() {
       const opt = recencyOptions.find(o => o.label === selectedRecency)
       if (opt) {
         const cutoff = now - opt.ms
-        result = result.filter(o => o.pipeline.created_at && new Date(o.pipeline.created_at).getTime() >= cutoff)
+        result = result.filter(o => o.dispatch.created_at && new Date(o.dispatch.created_at).getTime() >= cutoff)
       }
     }
 
@@ -427,7 +497,7 @@ export default function LawyerCaseMarketplace() {
     result = result.filter(o => !o.caseData.budget_min || o.caseData.budget_min <= maxB)
 
     return result
-  }, [offeredCases, selectedDomain, selectedRecency, selectedBudgetIndex, recencyOptions])
+  }, [incomingDispatches, selectedDomain, selectedRecency, selectedBudgetIndex, recencyOptions, now])
 
   // ── Click outside ──────────────────────────────────────
   useEffect(() => {
@@ -499,10 +569,10 @@ export default function LawyerCaseMarketplace() {
             {!(activeTab === 'left' ? isLoading : offeredLoading) && (
               <div className={`mt-3 inline-flex items-center gap-2 text-xs font-sans px-3 py-1 rounded-full ${activeTab === 'left' ? statusPillClass : (offeredError ? statusPillClass : statusPillClass)}`}>
                 <div className={`w-1.5 h-1.5 rounded-full ${activeTab === 'left' ? statusDotClass : (offeredError ? 'bg-red-500 dark:bg-red-400' : statusDotClass)}`} />
-                {activeTab === 'left'
-                  ? (dbError ? `Error: ${dbError}` : `${filteredCases.length} of ${allCases.length} cases shown`)
-                  : (offeredError ? `Error: ${offeredError}` : `${filteredOffered.length} of ${offeredCases.length} offered cases shown`)
-                }
+              {activeTab === 'left'
+                ? (dbError ? `Error: ${dbError}` : `${filteredCases.length} of ${allCases.length} cases shown`)
+                : (offeredError ? `Error: ${offeredError}` : `${filteredDispatches.length} of ${incomingDispatches.length} requests shown`)
+              }
               </div>
             )}
             {lawyerProfile && (
@@ -804,30 +874,30 @@ export default function LawyerCaseMarketplace() {
                   Retry
                 </button>
               </div>
-            ) : filteredOffered.length === 0 ? (
+            ) : filteredDispatches.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 text-center border border-dashed border-[#d8c1a1] dark:border-[#cdaa80]/30 rounded-xl bg-white/80 dark:bg-[#0a152e]/50 shadow-sm">
                 <svg className="w-12 h-12 text-[#997953]/40 dark:text-[#cdaa80]/40 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                 </svg>
-                <h3 className="text-xl font-serif text-[#997953] dark:text-[#cdaa80] mb-2">No offered cases</h3>
+                <h3 className="text-xl font-serif text-[#997953] dark:text-[#cdaa80] mb-2">No incoming requests</h3>
                 <p className="text-gray-600 dark:text-white/60 font-sans max-w-md">
                   No citizens have requested you yet. When they do, requests will appear here for you to accept.
                 </p>
               </div>
             ) : (
-              filteredOffered.map(({ pipeline, caseData }) => {
+              filteredDispatches.map(({ dispatch, caseData }) => {
                 const budget = formatBudget(caseData.budget_min, caseData.budget_max)
-                const offerDate = timeAgo(pipeline.offer_sent_at ?? pipeline.created_at)
+                const offerDate = timeAgo(dispatch.created_at)
                 const confidence = caseData.confidence_score
                   ? `${(caseData.confidence_score * 100).toFixed(0)}%`
                   : null
 
                 return (
                   <div
-                    key={pipeline.id}
-                    onMouseEnter={() => setHoveredCard(pipeline.id)}
+                    key={dispatch.id}
+                    onMouseEnter={() => setHoveredCard(dispatch.id)}
                     onMouseLeave={() => setHoveredCard(null)}
-                    className={`block bg-white dark:bg-[#cdaa80] text-[#0f1e3f] rounded-xl p-6 md:p-8 transition-all duration-300 ease-out cursor-pointer relative overflow-hidden shadow-lg border border-gray-100 dark:border-transparent ${hoveredCard === pipeline.id ? 'transform -translate-y-1 shadow-2xl brightness-105' : ''}`}
+                    className={`block bg-white dark:bg-[#cdaa80] text-[#0f1e3f] rounded-xl p-6 md:p-8 transition-all duration-300 ease-out cursor-pointer relative overflow-hidden shadow-lg border border-gray-100 dark:border-transparent ${hoveredCard === dispatch.id ? 'transform -translate-y-1 shadow-2xl brightness-105' : ''}`}
                   >
                     <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'radial-gradient(#0f1e3f 1px, transparent 1px)', backgroundSize: '20px 20px' }} />
 
@@ -839,13 +909,13 @@ export default function LawyerCaseMarketplace() {
                             <span className="inline-block px-1.5 py-0.5 bg-[#0f1e3f]/10 rounded text-[10px] font-bold tracking-wider font-sans text-[#0f1e3f]/70 uppercase">
                               {formatDomain(caseData.domain)}
                             </span>
-                            <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wider font-sans uppercase ${stageColor(pipeline.stage)}`}>
-                              {formatStage(pipeline.stage)}
+                            <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wider font-sans uppercase bg-amber-500/20 text-amber-700">
+                              Incoming
                             </span>
                           </div>
                           <div className="md:hidden text-right font-sans">
                             <div className="text-lg font-bold font-serif">
-                              {pipeline.offer_amount ? `₹${pipeline.offer_amount.toLocaleString('en-IN')}` : budget}
+                              {budget}
                             </div>
                           </div>
                         </div>
@@ -855,25 +925,15 @@ export default function LawyerCaseMarketplace() {
                         <p className="text-[#0f1e3f]/80 text-[14px] leading-relaxed font-sans max-w-4xl pr-4 line-clamp-2">
                           {caseData.incident_description ?? 'No description provided.'}
                         </p>
-                        {pipeline.offer_note && (
+                        {dispatch.intro_message && (
                           <div className="bg-[#0f1e3f]/5 rounded-lg px-3 py-2 text-[13px] font-sans text-[#0f1e3f]/70 italic">
-                            &ldquo;{pipeline.offer_note}&rdquo;
+                            &ldquo;{dispatch.intro_message}&rdquo;
                           </div>
                         )}
                         <div className="flex flex-wrap gap-1.5 pt-1">
                           {caseData.state && (
                             <span className="px-2 py-0.5 bg-[#0f1e3f]/10 rounded-full text-[10px] font-sans text-[#0f1e3f]/60">
                               📍 {caseData.district ? `${caseData.district}, ` : ''}{caseData.state}
-                            </span>
-                          )}
-                          {pipeline.offer_sent_at && (
-                            <span className="px-2 py-0.5 bg-[#0f1e3f]/10 rounded-full text-[10px] font-sans text-[#0f1e3f]/60">
-                              📤 Offer sent: {new Date(pipeline.offer_sent_at).toLocaleDateString('en-IN')}
-                            </span>
-                          )}
-                          {pipeline.accepted_at && (
-                            <span className="px-2 py-0.5 bg-emerald-500/15 rounded-full text-[10px] font-sans text-emerald-700">
-                              ✅ Accepted: {new Date(pipeline.accepted_at).toLocaleDateString('en-IN')}
                             </span>
                           )}
                           {confidence && (
@@ -890,27 +950,21 @@ export default function LawyerCaseMarketplace() {
                               </svg>
                               Offered {offerDate}
                             </div>
-                            {pipeline.outcome && (
-                              <div className="text-sm font-medium text-[#0f1e3f]/70 capitalize">
-                                Outcome: {pipeline.outcome}
-                              </div>
-                            )}
                           </div>
                           <div className="flex gap-2 flex-wrap">
                             <button
                               type="button"
-                              onClick={(e) => { e.stopPropagation(); setSelectedOffered({ pipeline, caseData }) }}
-                              className={`md:hidden px-5 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 text-center mt-2 w-full max-w-[160px] ${hoveredCard === pipeline.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'}`}
+                              onClick={(e) => { e.stopPropagation(); setSelectedDispatch({ dispatch, caseData }) }}
+                              className={`md:hidden px-5 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 text-center mt-2 w-full max-w-[160px] ${hoveredCard === dispatch.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'}`}
                             >
                               View case
                             </button>
                             <button
                               type="button"
-                              onClick={(e) => { e.stopPropagation(); void handleAcceptOffer(pipeline.id, caseData.id) }}
-                              disabled={acceptingPipelineId === pipeline.id}
-                              className={`md:hidden px-5 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 text-center mt-2 w-full max-w-[180px] ${hoveredCard === pipeline.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'} disabled:opacity-60`}
+                              onClick={(e) => { e.stopPropagation(); void handleSendOfferFromDispatch({ dispatch, caseData }) }}
+                              className={`md:hidden px-5 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 text-center mt-2 w-full max-w-[180px] ${hoveredCard === dispatch.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'} disabled:opacity-60`}
                             >
-                              {acceptingPipelineId === pipeline.id ? 'Accepting…' : 'Accept offer'}
+                              Send offer
                             </button>
                           </div>
                         </div>
@@ -919,27 +973,26 @@ export default function LawyerCaseMarketplace() {
                       <div className="hidden md:flex flex-col items-end justify-between shrink-0 pl-6 border-l border-[#0f1e3f]/10">
                         <div className="text-right font-sans">
                           <div className="text-[17px] font-bold font-serif mb-1">
-                            {pipeline.offer_amount ? `₹${pipeline.offer_amount.toLocaleString('en-IN')}` : budget}
+                            {budget}
                           </div>
                           <div className="text-[11px] text-[#0f1e3f]/50 whitespace-nowrap">
-                            {pipeline.offer_amount ? 'Your Offer' : 'Client Budget'}
+                            Client Budget
                           </div>
                         </div>
                         <div className="flex gap-2">
                           <button
                             type="button"
-                            onClick={(e) => { e.stopPropagation(); setSelectedOffered({ pipeline, caseData }) }}
-                            className={`px-6 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 mt-4 text-center ${hoveredCard === pipeline.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'}`}
+                            onClick={(e) => { e.stopPropagation(); setSelectedDispatch({ dispatch, caseData }) }}
+                            className={`px-6 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 mt-4 text-center ${hoveredCard === dispatch.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'}`}
                           >
                             View case
                           </button>
                           <button
                             type="button"
-                            onClick={(e) => { e.stopPropagation(); void handleAcceptOffer(pipeline.id, caseData.id) }}
-                            disabled={acceptingPipelineId === pipeline.id}
-                            className={`px-6 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 mt-4 text-center ${hoveredCard === pipeline.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'} disabled:opacity-60`}
+                            onClick={(e) => { e.stopPropagation(); void handleSendOfferFromDispatch({ dispatch, caseData }) }}
+                            className={`px-6 py-1.5 border border-[#0f1e3f]/30 rounded-lg text-sm font-medium font-sans transition-all duration-300 mt-4 text-center ${hoveredCard === dispatch.id ? 'bg-[#0f1e3f] text-[#cdaa80]' : 'hover:bg-[#0f1e3f]/5'} disabled:opacity-60`}
                           >
-                            {acceptingPipelineId === pipeline.id ? 'Accepting…' : 'Accept offer'}
+                            Send offer
                           </button>
                         </div>
                       </div>
@@ -1015,17 +1068,17 @@ export default function LawyerCaseMarketplace() {
         </Dialog.Root>
 
         {/* View Case Modal (Offered) */}
-        <Dialog.Root open={!!selectedOffered} onOpenChange={(open) => { if (!open) setSelectedOffered(null) }}>
+        <Dialog.Root open={!!selectedDispatch} onOpenChange={(open) => { if (!open) setSelectedDispatch(null) }}>
           <Dialog.Portal>
             <Dialog.Overlay className="fixed inset-0 bg-black/40 backdrop-blur-[1px] z-[9998]" />
-            <Dialog.Content className="fixed left-1/2 top-1/2 w-[92vw] max-w-[680px] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white dark:bg-[#0a152e] border border-[#e3d4bf] dark:border-[#cdaa80]/25 shadow-2xl p-5 md:p-6 z-[9999]">
+            <Dialog.Content className="fixed left-1/2 top-1/2 w-[92vw] max-w-[760px] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white dark:bg-[#0a152e] border border-[#e3d4bf] dark:border-[#cdaa80]/25 shadow-2xl p-5 md:p-6 z-[9999]">
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <Dialog.Title className="text-lg md:text-xl font-serif text-[#997953] dark:text-[#cdaa80]">
-                    {selectedOffered?.caseData.title ?? 'Untitled Case'}
+                    {selectedDispatch?.caseData.title ?? 'Untitled Case'}
                   </Dialog.Title>
                   <Dialog.Description className="mt-1 text-sm font-sans text-[#5b4b3d] dark:text-white/70">
-                    {selectedOffered ? formatDomain(selectedOffered.caseData.domain) : ''}
+                    {selectedDispatch ? formatDomain(selectedDispatch.caseData.domain) : ''}
                   </Dialog.Description>
                 </div>
                 <Dialog.Close className="rounded-lg px-3 py-1.5 text-sm font-sans border border-[#d8c1a1] dark:border-[#cdaa80]/30 hover:bg-[#f9f4ec] dark:hover:bg-[#12254a]">
@@ -1033,64 +1086,61 @@ export default function LawyerCaseMarketplace() {
                 </Dialog.Close>
               </div>
 
-              {selectedOffered && (
-                <div className="mt-4 space-y-3">
+              {selectedDispatch && (
+                <div className="mt-4 space-y-4">
+                  <div className="rounded-xl border border-[#e7d9c7] dark:border-[#cdaa80]/20 p-3 bg-[#fdf9f3] dark:bg-[#12254a]/60">
+                    <div className="text-[11px] uppercase tracking-wide font-bold text-[#997953] dark:text-[#cdaa80]">Citizen message</div>
+                    <div className="mt-1 text-sm font-sans text-[#2f261f] dark:text-white/80">
+                      {selectedDispatch.dispatch.intro_message}
+                    </div>
+                  </div>
+
                   <div className="text-sm font-sans text-[#2f261f] dark:text-white/85 leading-relaxed">
-                    {selectedOffered.caseData.incident_description ?? 'No description provided.'}
+                    {selectedDispatch.caseData.incident_description ?? 'No description provided.'}
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div className="rounded-xl border border-[#e7d9c7] dark:border-[#cdaa80]/20 p-3">
                       <div className="text-[11px] uppercase tracking-wide font-bold text-[#997953] dark:text-[#cdaa80]">Budget</div>
                       <div className="mt-1 text-sm font-sans text-[#2f261f] dark:text-white/80">
-                        {formatBudget(selectedOffered.caseData.budget_min, selectedOffered.caseData.budget_max)}
+                        {formatBudget(selectedDispatch.caseData.budget_min, selectedDispatch.caseData.budget_max)}
                       </div>
                     </div>
                     <div className="rounded-xl border border-[#e7d9c7] dark:border-[#cdaa80]/20 p-3">
-                      <div className="text-[11px] uppercase tracking-wide font-bold text-[#997953] dark:text-[#cdaa80]">Requested</div>
+                      <div className="text-[11px] uppercase tracking-wide font-bold text-[#997953] dark:text-[#cdaa80]">Sent</div>
                       <div className="mt-1 text-sm font-sans text-[#2f261f] dark:text-white/80">
-                        {formatDate(selectedOffered.pipeline.offer_sent_at ?? selectedOffered.pipeline.created_at)}
+                        {formatDate(selectedDispatch.dispatch.created_at)}
                       </div>
                     </div>
                   </div>
 
-                  {selectedOffered.pipeline.offer_note && (
-                    <div className="rounded-xl border border-[#e7d9c7] dark:border-[#cdaa80]/20 p-3 bg-[#fdf9f3] dark:bg-[#12254a]/60">
-                      <div className="text-[11px] uppercase tracking-wide font-bold text-[#997953] dark:text-[#cdaa80]">Citizen note</div>
-                      <div className="mt-1 text-sm font-sans text-[#2f261f] dark:text-white/80">
-                        {selectedOffered.pipeline.offer_note}
-                      </div>
-                    </div>
-                  )}
+                  <details className="rounded-xl border border-[#e7d9c7] dark:border-[#cdaa80]/20 p-3">
+                    <summary className="cursor-pointer text-sm font-sans text-[#5b4b3d] dark:text-white/70">
+                      View packaged brief (AI brief + requirements + documents)
+                    </summary>
+                    <pre className="mt-3 text-[11px] leading-relaxed whitespace-pre-wrap break-words font-mono text-[#2f261f]/80 dark:text-white/70 max-h-[260px] overflow-auto">
+{JSON.stringify({
+  ai_brief: selectedDispatch.dispatch.ai_brief,
+  citizen_inputs: selectedDispatch.dispatch.citizen_inputs,
+  documents: selectedDispatch.dispatch.documents,
+}, null, 2)}
+                    </pre>
+                  </details>
 
-                  <div className="flex flex-wrap gap-2 pt-1">
-                    {selectedOffered.caseData.state && (
-                      <span className="px-2 py-0.5 rounded-full text-[11px] font-sans bg-[#997953]/10 text-[#5b4b3d] dark:bg-[#cdaa80]/10 dark:text-white/70">
-                        {selectedOffered.caseData.district ? `${selectedOffered.caseData.district}, ` : ''}{selectedOffered.caseData.state}
-                      </span>
-                    )}
-                    {selectedOffered.caseData.incident_date && (
-                      <span className="px-2 py-0.5 rounded-full text-[11px] font-sans bg-[#997953]/10 text-[#5b4b3d] dark:bg-[#cdaa80]/10 dark:text-white/70">
-                        Incident: {new Date(selectedOffered.caseData.incident_date).toLocaleDateString('en-IN')}
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="pt-3 flex items-center justify-end gap-2">
+                  <div className="pt-1 flex items-center justify-end gap-2">
                     <button
                       type="button"
-                      onClick={() => { setSelectedOffered(null) }}
+                      onClick={() => { setSelectedDispatch(null) }}
                       className="px-4 py-2 rounded-lg text-sm font-sans border border-[#d8c1a1] dark:border-[#cdaa80]/30 hover:bg-[#f9f4ec] dark:hover:bg-[#12254a]"
                     >
                       Close
                     </button>
                     <button
                       type="button"
-                      onClick={() => { void handleAcceptOffer(selectedOffered.pipeline.id, selectedOffered.caseData.id) }}
-                      disabled={acceptingPipelineId === selectedOffered.pipeline.id}
-                      className="px-4 py-2 rounded-lg text-sm font-sans border border-[#0f1e3f]/30 bg-[#0f1e3f] text-[#cdaa80] hover:bg-[#0f1e3f]/90 disabled:opacity-60"
+                      onClick={() => { void handleSendOfferFromDispatch(selectedDispatch) }}
+                      className="px-4 py-2 rounded-lg text-sm font-sans border border-[#0f1e3f]/30 bg-[#0f1e3f] text-[#cdaa80] hover:bg-[#0f1e3f]/90"
                     >
-                      {acceptingPipelineId === selectedOffered.pipeline.id ? 'Accepting…' : 'Accept offer'}
+                      Send offer
                     </button>
                   </div>
                 </div>
