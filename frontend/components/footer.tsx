@@ -33,13 +33,8 @@ export interface FooterThemeColors {
 export interface FooterProps {
   /** Logo configuration */
   logoText?: string;
-<<<<<<< HEAD
-  logoIcon?: React.ElementType<{ size?: number; strokeWidth?: number; className?: string }>;
-
-=======
   logoIcon?: LucideIcon;
   
->>>>>>> d81799a8b273c6a2dbaabbd1fb70c796dcb5754d
   /** Newsletter configuration */
   subscribePlaceholder?: string;
   subscribeButtonText?: string;
