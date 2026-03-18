@@ -1,6 +1,6 @@
 langgraph==0.1.9
 langchain==0.2.5
-langchain-core==0.2.7
+langchain-core==0.2.21
 langchain-openai==0.1.8
 langchain-anthropic==0.1.15
 langchain-community==0.2.5
@@ -17,3 +17,7 @@ Pillow==10.3.0
 pydantic==2.7.1
 tenacity==8.3.0
 python-dotenv==1.0.1
+markdown_pdf==1.13.1
+sarvamai==0.1.27
+groq==1.1.1
+

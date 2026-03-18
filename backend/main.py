@@ -1,8 +1,9 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, Literal
+import io
 import uuid
 import os
 import sys
@@ -192,6 +193,46 @@ async def save_case(case_id: str):
 async def list_cases():
     cases = get_all_cases()
     return {"cases": cases}
+
+@app.post("/transcribe")
+async def transcribe_audio(file: UploadFile = File(...)):
+    """Accept an audio file and return its Sarvam STT transcription."""
+    try:
+        sarvam_key = os.environ.get("SARVAM_API_KEY")
+        if not sarvam_key:
+            raise HTTPException(status_code=500, detail="SARVAM_API_KEY is not configured")
+
+        contents = await file.read()
+        if not contents:
+            raise HTTPException(status_code=400, detail="Empty audio file")
+
+        from sarvamai import SarvamAI
+        client = SarvamAI(api_subscription_key=sarvam_key)
+
+        audio_file = io.BytesIO(contents)
+        audio_file.name = file.filename or "recording.webm"
+
+        response = client.speech_to_text.transcribe(
+            file=audio_file,
+            model="saaras:v3",
+            mode="transcribe",
+        )
+
+        transcript = getattr(response, "transcript", None)
+        if transcript is None and isinstance(response, dict):
+            transcript = response.get("transcript", "")
+        if transcript is None:
+            transcript = str(response)
+
+        return {"text": transcript}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Transcription error: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+
 
 if __name__ == "__main__":
     import uvicorn

@@ -1,10 +1,15 @@
 'use client';
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import axios from 'axios';
+import { toast } from 'sonner';
+import { useVoiceRecorder } from '@/hooks/useVoiceRecorder';
 import { Sidebar } from '../../../../components/sidebar';
 import type { NavItem } from '../../../../components/sidebar';
 import gsap from 'gsap';
 import { Menu, Home, Compass, Store, Gavel } from 'lucide-react';
+
+const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001').replace(/\/$/, '')
 import { useGSAP } from '@gsap/react';
 
 const LAWYER_NAV_ITEMS: NavItem[] = [
@@ -22,8 +27,62 @@ export default function LawyerHome() {
   const domainsHeaderRef = useRef<HTMLHeadingElement>(null);
   const cardsRef = useRef<HTMLDivElement>(null);
   const iconsRef = useRef<HTMLDivElement>(null);
+  const inputBarRef = useRef<HTMLDivElement>(null);
 
+  const [input, setInput] = useState('');
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const [activeLang, setActiveLang] = useState('ENGLISH');
+
+  const {
+    isRecording,
+    audioBlob,
+    error: recorderError,
+    startRecording,
+    stopRecording,
+    resetRecording
+  } = useVoiceRecorder();
+
+  useEffect(() => {
+    if (recorderError) {
+      toast.error(recorderError);
+      resetRecording();
+    }
+  }, [recorderError, resetRecording]);
+
+  useEffect(() => {
+    if (audioBlob) {
+      handleTranscription(audioBlob);
+    }
+  }, [audioBlob]);
+
+  const handleTranscription = async (blob: Blob) => {
+    setIsTranscribing(true);
+    resetRecording();
+
+    try {
+      const formData = new FormData();
+      formData.append('file', blob, 'voice_recording.webm');
+
+      const transcribeUrl = `${BACKEND_URL}/transcribe`;
+      
+      const response = await axios.post(transcribeUrl, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      if (response.data?.text) {
+        setInput(prev => prev ? `${prev} ${response.data.text}` : response.data.text);
+      } else {
+        toast.error("Could not transcribe audio. Please try again.");
+      }
+    } catch (err) {
+      console.error("Transcription error:", err);
+      toast.error("Failed to process voice input. Please ensure backend is running.");
+    } finally {
+      setIsTranscribing(false);
+    }
+  };
 
   const handleProfileClick = () => {
     router.push('/lawyerside/profile');
@@ -298,38 +357,61 @@ export default function LawyerHome() {
                 ))}
               </div>
             </div>
+          </div>
+        </div>
 
-            {/* Right Column: Recent Legal Updates (Self-stretching with internal scroll) */}
-            <div className="w-full lg:w-[320px] shrink-0 flex flex-col h-full min-h-0">
-              <div className="bg-white dark:bg-[#0f1e3f]/40 border border-[#d8c1a1] dark:border-[#cdaa80]/20 rounded-xl flex flex-col overflow-hidden flex-1 h-full min-h-0">
-                {/* Header now inside the panel for better vertical alignment */}
-                <div className="px-5 py-4 border-b border-gray-100 dark:border-white/5 bg-gray-50/30 dark:bg-white/5 shrink-0">
-                  <h2 className="text-[#5b4b3d] dark:text-[#cdaa80] text-[14px] md:text-[15px] font-semibold tracking-wide uppercase">
-                    RECENT LEGAL UPDATES
-                  </h2>
-                </div>
+        {/* Fixed Input Area at Bottom */}
+        <div ref={inputBarRef} className="absolute bottom-0 left-0 right-0 p-6 md:p-10 bg-gradient-to-t from-gray-50 via-gray-50 to-transparent dark:from-[#0f1e3f] dark:via-[#0f1e3f] dark:to-transparent z-20">
+          <div className="max-w-4xl mx-auto md:px-6">
+            <div className="flex items-center gap-4 w-full group relative">
+              
+              {/* Plus Button */}
+              <button 
+                type="button"
+                className="flex items-center justify-center w-12 h-12 md:w-14 md:h-14 rounded-full border border-gray-300 dark:border-white/10 dark:bg-transparent bg-white text-gray-500 dark:text-white/60 hover:bg-gray-100 dark:hover:bg-white/5 active:bg-gray-200 hover:scale-105 active:scale-95 transition-all duration-300 shrink-0 cursor-pointer shadow-sm z-10 outline-none focus:ring-2 focus:ring-[#997953]/50 dark:focus:ring-white/20"
+                aria-label="Add attachment"
+              >
+                <svg className="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4v16m8-8H4" />
+                </svg>
+              </button>
+              
+              {/* Input Field */}
+              <div className="flex-1 relative cursor-text transition-transform duration-300">
+                <input 
+                  type="text" 
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  disabled={isTranscribing}
+                  placeholder={isTranscribing ? "Processing voice input..." : "Describe your legal query..."}
+                  className="w-full bg-white dark:bg-transparent border border-gray-300 dark:border-[#cdaa80]/30 rounded-full pl-6 pr-16 py-4 md:py-[18px] text-[15px] outline-none text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-white/40 focus:border-[#997953] dark:focus:border-[#cdaa80] focus:ring-1 focus:ring-[#997953] dark:focus:ring-[#cdaa80] transition-all duration-300 shadow-[0_4px_20px_rgba(0,0,0,0.02)] dark:shadow-[0_4px_20px_rgba(0,0,0,0.2)] hover:border-gray-400 dark:hover:border-[#cdaa80]/60 hover:bg-white/50 dark:hover:bg-[#213a56]/20 focus:bg-white dark:focus:bg-[#1a2c47]/50 disabled:opacity-70 disabled:cursor-wait"
+                />
                 
-                <div className="overflow-y-auto p-5 space-y-5 custom-scrollbar flex-1">
-                  {[1, 2, 3, 4, 5, 6].map((i) => (
-                    <div key={i} className="group cursor-pointer">
-                      <div className="flex items-start gap-3">
-                        <div className="w-1.5 h-1.5 rounded-full bg-[#997953] dark:bg-[#cdaa80] mt-1.5 shrink-0"></div>
-                        <div>
-                          <h4 className="text-[13px] md:text-sm font-medium text-[#443831] dark:text-white group-hover:text-[#997953] dark:group-hover:text-[#cdaa80] transition-colors leading-snug">
-                            {i === 1 ? "New Amendments in Consumer Protection Act (2024)" : 
-                             i === 2 ? "Supreme Court Ruling on Property Inheritance Rights" :
-                             i === 3 ? "BNS guidelines updated for digital evidence" :
-                             i === 4 ? "Legal Aid Clinics expanded across rural districts" :
-                             i === 5 ? "Cyber law updates regarding data privacy" :
-                             "Public interest litigation on environmental safety"}
-                          </h4>
-                          <span className="text-[10px] uppercase tracking-wider text-gray-400 mt-1.5 block">Placeholder update headline</span>
-                        </div>
-                      </div>
-                      {i < 6 && <div className="h-px bg-gray-100 dark:bg-white/5 mt-5"></div>}
-                    </div>
-                  ))}
-                </div>
+                {/* Voice Input Button Inside the Input Field */}
+                <button
+                  type="button"
+                  onClick={isRecording ? stopRecording : startRecording}
+                  disabled={isTranscribing}
+                  className={`absolute right-3 top-1/2 -translate-y-1/2 flex items-center justify-center w-10 h-10 rounded-full transition-all duration-300 focus:outline-none disabled:opacity-50 disabled:cursor-wait ${
+                    isTranscribing 
+                      ? 'bg-transparent text-[#997953] dark:text-[#cdaa80]' // loader state
+                      : isRecording 
+                        ? 'bg-red-500 text-white animate-pulse-ring' // recording state
+                        : 'bg-transparent text-gray-400 hover:text-[#997953] dark:text-white/40 dark:hover:text-[#cdaa80] hover:bg-gray-100 dark:hover:bg-white/5' // idle state
+                  }`}
+                  aria-label={isRecording ? "Stop recording" : "Start recording"}
+                >
+                  {isTranscribing ? (
+                    <svg className="animate-spin w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                  ) : (
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={isRecording ? 2 : 1.5} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                    </svg>
+                  )}
+                </button>
               </div>
             </div>
           </div>
@@ -349,16 +431,15 @@ export default function LawyerHome() {
           border-radius: 8px;
         }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-          background-color: rgba(153,121,83,0.55);
+          background-color: rgba(205, 170, 128, 0.5);
         }
-        .dark .custom-scrollbar::-webkit-scrollbar-track {
-          background: #0f1e3f;
+        @keyframes pulse-ring {
+          0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+          70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+          100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
         }
-        .dark .custom-scrollbar::-webkit-scrollbar-thumb {
-          background-color: #213a56;
-        }
-        .dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-          background-color: rgba(205,170,128,0.5);
+        .animate-pulse-ring {
+          animation: pulse-ring 2s infinite;
         }
       `}} />
     </div>

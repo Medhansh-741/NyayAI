@@ -8,6 +8,8 @@ import axios from 'axios';
 import { supabase } from '@/lib/supabase/client';
 import { upsertChatbotCase } from '@/lib/db/cases';
 import { setActiveCaseForUser } from '@/lib/db/sessions';
+import { useVoiceRecorder } from '@/hooks/useVoiceRecorder';
+import { toast } from 'sonner';
 import { getNotifications, markAllNotificationsRead, markNotificationRead, subscribeToNotifications } from '@/lib/db/notifications';
 import type { Database } from '@/types/supabase';
 
@@ -46,11 +48,21 @@ export default function CitizenHome() {
   const [isLoading, setIsLoading] = useState(false);
   const [caseId, setCaseId] = useState<string | null>(null);
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  
+  const {
+    isRecording,
+    audioBlob,
+    error: recorderError,
+    startRecording,
+    stopRecording,
+    resetRecording
+  } = useVoiceRecorder();
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [notificationLoading, setNotificationLoading] = useState(false);
   const [notifications, setNotifications] = useState<NotificationRow[]>([]);
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
-  
+
   const containerRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -95,7 +107,50 @@ export default function CitizenHome() {
   useEffect(() => {
     // Scroll to bottom whenever messages change or loading state changes
     scrollToBottom();
-  }, [messages, isLoading]);
+  }, [messages, isLoading, isTranscribing]);
+
+  useEffect(() => {
+    if (recorderError) {
+      toast.error(recorderError);
+      resetRecording();
+    }
+  }, [recorderError, resetRecording]);
+
+  useEffect(() => {
+    if (audioBlob) {
+      handleTranscription(audioBlob);
+    }
+  }, [audioBlob]);
+
+  const handleTranscription = async (blob: Blob) => {
+    setIsTranscribing(true);
+    resetRecording(); // Clear blob so we don't re-trigger
+
+    try {
+      const formData = new FormData();
+      formData.append('file', blob, 'voice_recording.webm');
+
+      // Check if backend uses 8001 or standard API_URL
+      const transcribeUrl = `${BACKEND_URL}/transcribe`;
+      
+      const response = await axios.post(transcribeUrl, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      if (response.data?.text) {
+        setInput(prev => prev ? `${prev} ${response.data.text}` : response.data.text);
+      } else {
+        toast.error("Could not transcribe audio. Please try again.");
+      }
+    } catch (err) {
+      console.error("Transcription error:", err);
+      toast.error("Failed to process voice input. Please ensure backend is running.");
+    } finally {
+      setIsTranscribing(false);
+    }
+  };
 
   useEffect(() => {
     const ctx = gsap.context(() => {
@@ -733,10 +788,36 @@ export default function CitizenHome() {
                   type="text" 
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  disabled={isLoading}
-                  placeholder={isLoading ? "Generating analysis..." : "Describe your legal situation..."}
-                  className="w-full bg-white dark:bg-transparent border border-gray-300 dark:border-[#cdaa80]/30 rounded-full px-6 py-4 md:py-[18px] text-[15px] outline-none text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-white/40 focus:border-[#997953] dark:focus:border-[#cdaa80] focus:ring-1 focus:ring-[#997953] dark:focus:ring-[#cdaa80] transition-all duration-300 shadow-[0_4px_20px_rgba(0,0,0,0.02)] dark:shadow-[0_4px_20px_rgba(0,0,0,0.2)] hover:border-gray-400 dark:hover:border-[#cdaa80]/60 hover:bg-white/50 dark:hover:bg-[#213a56]/20 focus:bg-white dark:focus:bg-[#1a2c47]/50 disabled:opacity-70 disabled:cursor-wait"
+                  disabled={isLoading || isTranscribing}
+                  placeholder={isLoading ? "Generating analysis..." : isTranscribing ? "Processing voice input..." : "Describe your legal situation..."}
+                  className="w-full bg-white dark:bg-transparent border border-gray-300 dark:border-[#cdaa80]/30 rounded-full pl-6 pr-16 py-4 md:py-[18px] text-[15px] outline-none text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-white/40 focus:border-[#997953] dark:focus:border-[#cdaa80] focus:ring-1 focus:ring-[#997953] dark:focus:ring-[#cdaa80] transition-all duration-300 shadow-[0_4px_20px_rgba(0,0,0,0.02)] dark:shadow-[0_4px_20px_rgba(0,0,0,0.2)] hover:border-gray-400 dark:hover:border-[#cdaa80]/60 hover:bg-white/50 dark:hover:bg-[#213a56]/20 focus:bg-white dark:focus:bg-[#1a2c47]/50 disabled:opacity-70 disabled:cursor-wait"
                 />
+                
+                {/* Voice Input Button Inside the Input Field */}
+                <button
+                  type="button"
+                  onClick={isRecording ? stopRecording : startRecording}
+                  disabled={isLoading || isTranscribing}
+                  className={`absolute right-3 top-1/2 -translate-y-1/2 flex items-center justify-center w-10 h-10 rounded-full transition-all duration-300 focus:outline-none disabled:opacity-50 disabled:cursor-wait ${
+                    isTranscribing 
+                      ? 'bg-transparent text-[#997953] dark:text-[#cdaa80]' // loader state
+                      : isRecording 
+                        ? 'bg-red-500 text-white animate-pulse-ring' // recording state
+                        : 'bg-transparent text-gray-400 hover:text-[#997953] dark:text-white/40 dark:hover:text-[#cdaa80] hover:bg-gray-100 dark:hover:bg-white/5' // idle state
+                  }`}
+                  aria-label={isRecording ? "Stop recording" : "Start recording"}
+                >
+                  {isTranscribing ? (
+                    <svg className="animate-spin w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                  ) : (
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={isRecording ? 2 : 1.5} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                    </svg>
+                  )}
+                </button>
               </form>
               
               {/* Send Button */}
@@ -777,6 +858,14 @@ export default function CitizenHome() {
         }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover {
           background-color: rgba(205, 170, 128, 0.5);
+        }
+        @keyframes pulse-ring {
+          0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+          70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+          100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+        .animate-pulse-ring {
+          animation: pulse-ring 2s infinite;
         }
       `}} />
     </div>
