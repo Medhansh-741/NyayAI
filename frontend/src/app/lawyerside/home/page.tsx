@@ -1,5 +1,6 @@
 'use client';
 import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import axios from 'axios';
 import { toast } from 'sonner';
@@ -7,10 +8,11 @@ import { useVoiceRecorder } from '@/hooks/useVoiceRecorder';
 import { Sidebar } from '../../../../components/sidebar';
 import type { NavItem } from '../../../../components/sidebar';
 import gsap from 'gsap';
-import { Menu, Home, Compass, Store, Gavel } from 'lucide-react';
+import { Menu, Home, Store, Gavel, X } from 'lucide-react';
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001').replace(/\/$/, '')
 import { useGSAP } from '@gsap/react';
+import * as Dialog from '@radix-ui/react-dialog';
 
 const LAWYER_NAV_ITEMS: NavItem[] = [
   { id: 'menu', icon: Menu, label: 'Menu' },
@@ -23,10 +25,16 @@ export default function LawyerHome() {
   const router = useRouter();
   const containerRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
-  const searchBarRef = useRef<HTMLDivElement>(null);
   const domainsHeaderRef = useRef<HTMLHeadingElement>(null);
   const cardsRef = useRef<HTMLDivElement>(null);
   const iconsRef = useRef<HTMLDivElement>(null);
+  const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
+  const [topics, setTopics] = useState<DomainTopic[]>([]);
+  const [loadingTopics, setLoadingTopics] = useState(false);
+  const [topicsError, setTopicsError] = useState<string | null>(null);
+  const [legalUpdates, setLegalUpdates] = useState<LegalUpdate[]>([]);
+  const [loadingUpdates, setLoadingUpdates] = useState(false);
+  const [updatesError, setUpdatesError] = useState<string | null>(null);
   const inputBarRef = useRef<HTMLDivElement>(null);
 
   const [input, setInput] = useState('');
@@ -87,6 +95,8 @@ export default function LawyerHome() {
   const handleProfileClick = () => {
     router.push('/lawyerside/profile');
   };
+
+  const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001').replace(/\/$/, '');
 
   const domains = [
     {
@@ -239,6 +249,93 @@ export default function LawyerHome() {
     }
   ];
 
+  useEffect(() => {
+    if (!selectedDomain) {
+      setTopics([]);
+      setTopicsError(null);
+      return;
+    }
+
+    let cancelled = false;
+    const fetchTopics = async () => {
+      setLoadingTopics(true);
+      setTopicsError(null);
+      try {
+        const response = await fetch(`${BACKEND_URL}/legal/domain-topics`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ domain: selectedDomain, per_topic_limit: 6 }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data: DomainTopicsResponse = await response.json();
+        if (!cancelled) {
+          setTopics(data.topics || []);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setTopics([]);
+          setTopicsError('Unable to load legal sections right now. Please try again.');
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingTopics(false);
+        }
+      }
+    };
+
+    fetchTopics();
+    return () => {
+      cancelled = true;
+    };
+  }, [BACKEND_URL, selectedDomain]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+    const fetchLegalUpdates = async () => {
+      setLoadingUpdates(true);
+      setUpdatesError(null);
+
+      try {
+        const response = await fetch(`${BACKEND_URL}/explorer/legal-updates?limit=8`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data: LegalUpdatesResponse = await response.json();
+        if (!cancelled) {
+          const nextUpdates = (data.updates || []).slice(0, 10);
+          setLegalUpdates(nextUpdates.length ? nextUpdates : FALLBACK_LEGAL_UPDATES.slice(0, 8));
+        }
+      } catch (_error) {
+        if (!cancelled) {
+          setLegalUpdates(FALLBACK_LEGAL_UPDATES.slice(0, 8));
+          setUpdatesError('Showing curated legal updates.');
+        }
+      } finally {
+        clearTimeout(timeoutId);
+        if (!cancelled) {
+          setLoadingUpdates(false);
+        }
+      }
+    };
+
+    fetchLegalUpdates();
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [BACKEND_URL]);
+
   useGSAP(() => {
     const tl = gsap.timeline();
 
@@ -251,11 +348,6 @@ export default function LawyerHome() {
     .fromTo(titleRef.current, 
       { opacity: 0, y: -30 },
       { opacity: 1, y: 0, duration: 0.8, ease: 'power3.out' },
-      "-=0.4"
-    )
-    .fromTo(searchBarRef.current, 
-      { opacity: 0, y: -20, scale: 0.95 },
-      { opacity: 1, y: 0, scale: 1, duration: 0.6, ease: 'power3.out' }, 
       "-=0.4"
     )
     .fromTo(domainsHeaderRef.current, 
@@ -304,29 +396,6 @@ export default function LawyerHome() {
             LEGAL RIGHTS EXPLORER
           </h1>
 
-          {/* Search Bar */}
-          <div ref={searchBarRef} className="relative w-full max-w-5xl mx-auto mb-8 group">
-            <div className="absolute inset-0 bg-gradient-to-r from-[#997953]/20 to-[#997953]/5 dark:from-[#cdaa80]/20 dark:to-[#cdaa80]/5 rounded-full blur-sm group-hover:blur-md transition-all duration-300"></div>
-            <div className="relative flex items-center bg-white dark:bg-[#0f1e3f] border border-[#d8c1a1] dark:border-[#cdaa80]/40 rounded-full overflow-hidden transition-all duration-300 focus-within:border-[#997953] dark:focus-within:border-[#cdaa80] focus-within:ring-1 focus-within:ring-[#997953]/40 dark:focus-within:ring-[#cdaa80]/50">
-              <input 
-                type="text" 
-                placeholder="Search by keyword (e.g., Eviction), Section (e.g., BNS 103), or legal issue..."
-                className="flex-1 bg-transparent px-6 py-3 md:py-4 text-[#443831] dark:text-white placeholder-[#443831]/40 dark:placeholder-white/50 outline-none text-[15px] md:text-base w-full"
-              />
-              <div className="flex items-center px-4 gap-3 bg-[#997953]/10 dark:bg-[#cdaa80]/10 h-full py-3 md:py-4 border-l border-[#997953]/20 dark:border-[#cdaa80]/20">
-                {['ENGLISH', 'हिन्दी', 'HINGLISH'].map((lang) => (
-                  <button 
-                    key={lang}
-                    onClick={() => setActiveLang(lang)}
-                    className={`text-[11px] md:text-sm font-medium tracking-wide transition-colors ${activeLang === lang ? 'text-[#997953] dark:text-[#cdaa80]' : 'text-[#443831]/60 hover:text-[#443831]/90 dark:text-white/60 dark:hover:text-white/90'}`}
-                  >
-                    {lang}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
           {/* Main Content Grid Area (Flex-1 to consume exactly the remaining viewport height) */}
           <div className="w-full flex flex-col lg:flex-row gap-8 items-stretch flex-1 min-h-0">
             
@@ -340,6 +409,15 @@ export default function LawyerHome() {
                 {domains.map((domain) => (
                   <div 
                     key={domain.title} 
+                    onClick={() => setSelectedDomain(domain.title)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        setSelectedDomain(domain.title);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
                     className="domain-card bg-white dark:bg-[#cdaa80] text-[#0f1e3f] rounded-xl p-2 flex flex-col items-center justify-center text-center gap-1.5 cursor-pointer border border-[#e3d4bf] dark:border-transparent hover:bg-[#f9f4ec] dark:hover:bg-[#d9b88f] hover:-translate-y-1 hover:shadow-md transition-all duration-300 h-full w-full group min-h-0"
                   >
                     <div className="shrink-0 transition-transform duration-300 group-hover:scale-110 mb-0.5">
@@ -412,11 +490,125 @@ export default function LawyerHome() {
                     </svg>
                   )}
                 </button>
+
+            {/* Right Column: Recent Legal Updates (Self-stretching with internal scroll) */}
+            <div className="w-full lg:w-[320px] shrink-0 flex flex-col h-full min-h-0">
+              <div className="bg-white dark:bg-[#0f1e3f]/40 border border-[#d8c1a1] dark:border-[#cdaa80]/20 rounded-xl flex flex-col overflow-hidden flex-1 h-full min-h-0">
+                {/* Header now inside the panel for better vertical alignment */}
+                <div className="px-5 py-4 border-b border-gray-100 dark:border-white/5 bg-gray-50/30 dark:bg-white/5 shrink-0">
+                  <h2 className="text-[#5b4b3d] dark:text-[#cdaa80] text-[14px] md:text-[15px] font-semibold tracking-wide uppercase">
+                    RECENT LEGAL UPDATES
+                  </h2>
+                </div>
+                
+                <div className="overflow-y-auto p-5 space-y-5 custom-scrollbar flex-1">
+                  {loadingUpdates && (
+                    <div className="text-[13px] md:text-sm font-medium text-[#443831] dark:text-white/80">
+                      Loading latest legal updates...
+                    </div>
+                  )}
+
+                  {!loadingUpdates && updatesError && (
+                    <div className="text-[13px] md:text-sm font-medium text-[#443831] dark:text-white/80">
+                      {updatesError}
+                    </div>
+                  )}
+
+                  {!loadingUpdates && legalUpdates.length === 0 && (
+                    <div className="text-[13px] md:text-sm font-medium text-[#443831] dark:text-white/80">
+                      No recent legal updates available.
+                    </div>
+                  )}
+
+                  {!loadingUpdates && legalUpdates.length > 0 && legalUpdates.map((update, index) => (
+                    <a
+                      key={`${update.link}-${index}`}
+                      className="group cursor-pointer block"
+                      href={update.link}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="w-1.5 h-1.5 rounded-full bg-[#997953] dark:bg-[#cdaa80] mt-1.5 shrink-0"></div>
+                        <div>
+                          <h4 className="text-[13px] md:text-sm font-medium text-[#443831] dark:text-white group-hover:text-[#997953] dark:group-hover:text-[#cdaa80] transition-colors leading-snug">
+                            {update.title}
+                          </h4>
+                          <span className="text-[10px] uppercase tracking-wider text-gray-400 mt-1.5 block">{update.source}</span>
+                        </div>
+                      </div>
+                      {update.short_summary && (
+                        <p className="ml-4 mt-1 text-[11px] leading-tight text-[#5b4b3d] dark:text-white/70 line-clamp-1">
+                          {update.short_summary}
+                        </p>
+                      )}
+                      {index < legalUpdates.length - 1 && <div className="h-px bg-gray-100 dark:bg-white/5 mt-5"></div>}
+                    </a>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
         </div>
       </div>
+
+      <Dialog.Root open={!!selectedDomain} onOpenChange={(open) => { if (!open) setSelectedDomain(null); }}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-[9998] bg-black/40 backdrop-blur-[2px]" />
+          <Dialog.Content className="fixed left-1/2 top-1/2 z-[9999] h-[78vh] max-h-[680px] w-[94vw] max-w-[780px] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-[#d8c1a1] bg-white shadow-2xl outline-none dark:border-[#cdaa80]/30 dark:bg-[#0a152e] flex flex-col overflow-hidden">
+            <div className="flex items-start justify-between border-b border-[#e9dcc9] px-5 py-4 dark:border-white/10 md:px-6">
+              <div>
+                <Dialog.Title className="text-lg font-serif font-bold tracking-wide text-[#997953] dark:text-[#cdaa80] md:text-xl">
+                  {selectedDomain || 'Domain'}
+                </Dialog.Title>
+                <Dialog.Description className="mt-1 text-sm font-sans text-[#5b4b3d] dark:text-white/70">
+                  Top relevant legal sections from corpus retrieval
+                </Dialog.Description>
+              </div>
+              <Dialog.Close className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#d8c1a1] text-[#5b4b3d] transition-colors hover:bg-[#f9f4ec] dark:border-[#cdaa80]/30 dark:text-[#cdaa80] dark:hover:bg-[#12254a]" aria-label="Close legal sections modal">
+                <X className="h-4 w-4" />
+              </Dialog.Close>
+            </div>
+
+            <div className="custom-scrollbar flex-1 overflow-y-auto px-5 pb-5 pt-4 md:px-6 md:pb-6">
+              {loadingTopics && (
+                <div className="rounded-xl border border-[#e7d9c5] bg-[#fbf7f1] p-4 text-sm font-sans text-[#5b4b3d] dark:border-[#cdaa80]/20 dark:bg-[#12254a]/30 dark:text-white/75">
+                  Loading relevant legal sections...
+                </div>
+              )}
+
+              {!loadingTopics && topicsError && (
+                <div className="rounded-xl border border-[#e7d9c5] bg-[#fbf7f1] p-4 text-sm font-sans text-[#5b4b3d] dark:border-[#cdaa80]/20 dark:bg-[#12254a]/30 dark:text-white/75">
+                  {topicsError}
+                </div>
+              )}
+
+              {!loadingTopics && !topicsError && (
+                <div className="space-y-4">
+                  {topics.length === 0 && (
+                    <div className="rounded-xl border border-[#e7d9c5] bg-[#fbf7f1] p-4 text-sm font-sans text-[#5b4b3d] dark:border-[#cdaa80]/20 dark:bg-[#12254a]/30 dark:text-white/75">
+                      No relevant sections were found for this domain in the current corpus.
+                    </div>
+                  )}
+                  {topics.map((topic) => (
+                    <div key={topic.title} className="rounded-xl border border-[#e7d9c5] bg-[#fffdfa] p-4 dark:border-[#cdaa80]/20 dark:bg-[#12254a]/25">
+                      <h3 className="text-[15px] font-sans font-bold text-[#2f261f] dark:text-[#f4e2c8]">
+                        {topic.title}
+                      </h3>
+                      <p className="mt-1 text-sm font-sans leading-relaxed text-[#4a3d33] dark:text-white/80">
+                        {topic.explanation}
+                      </p>
+                      <p className="mt-2 text-[11px] font-sans uppercase tracking-[0.12em] text-[#8a6f4f] dark:text-[#cdaa80]/85">
+                        {topic.source_section}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
       
       {/* Global CSS for the custom scrollbar */}
       <style dangerouslySetInnerHTML={{__html: `
@@ -445,3 +637,68 @@ export default function LawyerHome() {
     </div>
   );
 }
+
+type DomainTopic = {
+  title: string;
+  explanation: string;
+  source_section: string;
+  score: number | null;
+  is_fallback: boolean;
+};
+
+type DomainTopicsResponse = {
+  domain: string;
+  topics: DomainTopic[];
+};
+
+type LegalUpdate = {
+  title: string;
+  short_summary: string;
+  source: string;
+  link: string;
+  published_at: string;
+};
+
+type LegalUpdatesResponse = {
+  updates: LegalUpdate[];
+  mode?: string;
+  fetched_at?: string;
+};
+
+const FALLBACK_LEGAL_UPDATES: LegalUpdate[] = [
+  {
+    title: 'Supreme Court reiterates proportionality in administrative decisions',
+    short_summary: 'Recent observations emphasize reasoned orders and proportionality in administrative action.',
+    source: 'NyayaAI Curated Brief',
+    link: 'https://www.sci.gov.in/',
+    published_at: '',
+  },
+  {
+    title: 'Consumer redressal timelines highlighted in latest circular',
+    short_summary: 'Authorities stressed timely disposal and clear notice standards in consumer disputes.',
+    source: 'NyayaAI Curated Brief',
+    link: 'https://consumeraffairs.nic.in/',
+    published_at: '',
+  },
+  {
+    title: 'Data protection compliance advisories gain focus for digital services',
+    short_summary: 'Organizations are advised to strengthen consent handling and incident reporting processes.',
+    source: 'NyayaAI Curated Brief',
+    link: 'https://www.meity.gov.in/',
+    published_at: '',
+  },
+  {
+    title: 'Recent criminal procedure updates stress evidence chain integrity',
+    short_summary: 'Legal notes indicate tighter scrutiny on digital evidence handling and record continuity.',
+    source: 'NyayaAI Curated Brief',
+    link: 'https://www.indiacode.nic.in/',
+    published_at: '',
+  },
+  {
+    title: 'Public law brief tracks writ maintainability and alternative remedy',
+    short_summary: 'Courts continue balancing writ relief with availability of statutory appeal mechanisms.',
+    source: 'NyayaAI Curated Brief',
+    link: 'https://www.indiacode.nic.in/',
+    published_at: '',
+  },
+];

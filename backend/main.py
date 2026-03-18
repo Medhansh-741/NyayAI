@@ -1,3 +1,4 @@
+from fastapi import FastAPI, HTTPException, Query
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,6 +14,9 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "agents"
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "schemas")))
 
 from orchestrator import build_nyaya_graph
+from app.services.legal_graph_service import legal_graph_service
+from app.services.legal_updates_service import legal_updates_service
+from retrieval import get_domain_topic_sections
 import json
 import sqlite3
 from datetime import datetime
@@ -35,9 +39,84 @@ class IntakeRequest(BaseModel):
     state_jurisdiction: Optional[str] = "Maharashtra"
     mode: Literal["citizen", "lawyer"] = "citizen"
 
+
+class DomainTopicsRequest(BaseModel):
+    domain: str = Field(min_length=1, max_length=100)
+    per_topic_limit: int = Field(default=5, ge=1, le=12)
+
+
+class DomainTopicItem(BaseModel):
+    title: str
+    explanation: str
+    source_section: str
+    score: Optional[float] = None
+    is_fallback: bool = False
+
+
+class DomainTopicsResponse(BaseModel):
+    domain: str
+    topics: list[DomainTopicItem]
+
+
+class LegalUpdateItem(BaseModel):
+    title: str
+    short_summary: str
+    source: str
+    link: str
+    published_at: str
+
+
+class LegalUpdatesResponse(BaseModel):
+    updates: list[LegalUpdateItem]
+    mode: str
+    fetched_at: str
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "version": "4.0.0"}
+
+
+@app.get("/legal-graph/health")
+async def legal_graph_health():
+    return legal_graph_service.health()
+
+
+@app.get("/legal-graph/acts/{act_name}/chapters")
+async def legal_graph_chapters(act_name: str):
+    neo4j_health = legal_graph_service.health()
+    return {
+        "act_name": act_name,
+        "chapters": legal_graph_service.get_chapters_under_act(act_name),
+        "neo4j": neo4j_health,
+    }
+
+
+@app.get("/legal-graph/acts/{act_name}/chapters/{chapter_number}/sections")
+async def legal_graph_sections(act_name: str, chapter_number: str):
+    neo4j_health = legal_graph_service.health()
+    return {
+        "act_name": act_name,
+        "chapter_number": chapter_number,
+        "sections": legal_graph_service.get_sections_under_chapter(act_name, chapter_number),
+        "neo4j": neo4j_health,
+    }
+
+
+@app.get("/legal-graph/acts/{act_name}/sections/{section_number}")
+async def legal_graph_section_detail(act_name: str, section_number: str):
+    neo4j_health = legal_graph_service.health()
+    if not neo4j_health.get("available", False):
+        return {
+            "act_name": act_name,
+            "section_number": section_number,
+            "section": None,
+            "neo4j": neo4j_health,
+        }
+
+    section = legal_graph_service.get_section_by_number(act_name, section_number)
+    if not section:
+        raise HTTPException(status_code=404, detail="Section not found")
+    return section
 
 @app.get("/download/{filename}")
 async def download_file(filename: str):
@@ -45,6 +124,24 @@ async def download_file(filename: str):
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(filepath, filename=filename)
+
+
+@app.post("/legal/domain-topics", response_model=DomainTopicsResponse)
+async def legal_domain_topics(request: DomainTopicsRequest):
+    try:
+        topics = get_domain_topic_sections(request.domain, per_topic_limit=request.per_topic_limit)
+        return DomainTopicsResponse(domain=request.domain, topics=topics)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve domain topics: {str(e)}")
+
+
+@app.get("/explorer/legal-updates", response_model=LegalUpdatesResponse)
+async def explorer_legal_updates(limit: int = Query(default=8, ge=5, le=10)):
+    try:
+        payload = await legal_updates_service.get_updates_payload(limit=limit)
+        return LegalUpdatesResponse(**payload)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve legal updates: {str(e)}")
 
 # Initialize the LangGraph
 nyaya_graph = build_nyaya_graph()
@@ -115,6 +212,27 @@ def get_all_cases():
     rows = c.fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
+def get_case_by_id(case_id: str):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("SELECT * FROM cases WHERE case_id = ?", (case_id,))
+    row = c.fetchone()
+    conn.close()
+    
+    if not row:
+        return None
+    
+    case_dict = dict(row)
+    # Parse the metadata_json to return full analysis
+    if case_dict.get('metadata_json'):
+        try:
+            case_dict['analysis'] = json.loads(case_dict['metadata_json'])
+        except json.JSONDecodeError:
+            case_dict['analysis'] = None
+    
+    return case_dict
 
 @app.post("/analyze")
 async def analyze_case(request: IntakeRequest):
@@ -194,6 +312,12 @@ async def list_cases():
     cases = get_all_cases()
     return {"cases": cases}
 
+@app.get("/cases/{case_id}")
+async def get_case_analysis(case_id: str):
+    case = get_case_by_id(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return case
 @app.post("/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
     """Accept an audio file and return its Sarvam STT transcription."""

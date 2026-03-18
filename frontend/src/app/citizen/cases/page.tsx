@@ -13,6 +13,7 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { acceptOffer, getCasePipelineForCitizen } from '@/lib/db/pipeline';
 import { toast } from 'sonner';
 import NextLink from 'next/link';
+import { AnalysisModal } from '../../../components/AnalysisModal';
 
 type CaseRow = Database['public']['Tables']['cases']['Row'];
 type NotificationRow = Database['public']['Tables']['notifications']['Row'];
@@ -25,6 +26,47 @@ function formatUiStatus(caseRow: CaseRow): string {
   if (caseRow.status === 'analysis_pending') return 'Under AI Analysis'
   if (caseRow.status === 'draft') return 'Draft'
   return (caseRow.status ?? 'Submitted').replace(/_/g, ' ')
+}
+
+function toObject(value: unknown): Record<string, any> | null {
+  if (!value) return null
+  if (typeof value === 'object') return value as Record<string, any>
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value)
+      return typeof parsed === 'object' && parsed ? parsed as Record<string, any> : null
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+function buildFallbackAnalysisFromCase(caseRow: CaseRow | null): Record<string, any> | null {
+  if (!caseRow) return null
+
+  const structuredFacts = toObject((caseRow as any).confirmed_facts) ?? toObject((caseRow as any).case_brief)
+  const legalMapping = toObject((caseRow as any).applicable_laws)
+  const actionPlan = toObject((caseRow as any).recommended_strategy)
+  const evidence = toObject((caseRow as any).evidence_inventory)
+
+  if (!structuredFacts && !legalMapping && !actionPlan && !evidence) {
+    return null
+  }
+
+  const mergedActionPlan = {
+    ...(actionPlan ?? {}),
+    evidence_checklist: (actionPlan as any)?.evidence_checklist ?? evidence?.items ?? evidence,
+  }
+
+  return {
+    case_id: caseRow.id,
+    structured_facts: structuredFacts ?? {},
+    legal_mapping: legalMapping ?? {},
+    action_plan: mergedActionPlan,
+    generated_documents: {},
+    reasoning_trace: {},
+  }
 }
 
 export default function CaseHistory() {
@@ -47,6 +89,9 @@ export default function CaseHistory() {
   const [offersError, setOffersError] = useState<string | null>(null)
   const [offers, setOffers] = useState<Database['public']['Tables']['case_pipeline']['Row'][]>([])
   const [acceptingOfferId, setAcceptingOfferId] = useState<string | null>(null)
+  const [analysisLoading, setAnalysisLoading] = useState(false)
+  const [caseAnalysis, setCaseAnalysis] = useState<any>(null)
+  const [analysisError, setAnalysisError] = useState<string | null>(null)
   const [recentlyMatchedIds, setRecentlyMatchedIds] = useState<Set<string>>(new Set())
   const [notificationOpen, setNotificationOpen] = useState(false)
   const [notificationLoading, setNotificationLoading] = useState(false)
@@ -190,6 +235,9 @@ export default function CaseHistory() {
     setSelectedCase(caseRow)
     setOffersError(null)
     setOffers([])
+    setAnalysisLoading(true)
+    setCaseAnalysis(null)
+    setAnalysisError(null)
     if (!caseRow) return
 
     // Always fetch the latest case row for the modal so status + AI draft fields are synced.
@@ -200,6 +248,30 @@ export default function CaseHistory() {
       .maybeSingle()
     if (!freshErr && freshCase) {
       setSelectedCase(freshCase as CaseRow)
+    }
+
+    // Fetch case analysis from backend API using case_id
+    try {
+      const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001').replace(/\/$/, '')
+      const response = await fetch(`${BACKEND_URL}/cases/${caseId}`)
+      if (response.ok) {
+        const data = await response.json()
+        setCaseAnalysis(data.analysis || null)
+      } else if (response.status === 404) {
+        const fallbackAnalysis = buildFallbackAnalysisFromCase((freshCase as CaseRow) ?? caseRow)
+        if (fallbackAnalysis) {
+          setCaseAnalysis(fallbackAnalysis)
+        } else {
+          setAnalysisError('This case exists in dashboard list but its full analysis is not synced yet.')
+        }
+      } else {
+        setAnalysisError('Could not load analysis right now. Please try again.')
+      }
+    } catch (err) {
+      console.error('Failed to fetch case analysis:', err)
+      setAnalysisError('Could not connect to analysis service. Please try again.')
+    } finally {
+      setAnalysisLoading(false)
     }
 
     setOffersLoading(true)
@@ -620,6 +692,7 @@ export default function CaseHistory() {
               onClick={() => {
                 setClickedCardId(c.id);
                 setTimeout(() => setClickedCardId(null), 1000);
+                void openCaseDetails(c.id)
               }}
               className={`
               case-card bg-white dark:bg-[#cdaa80] rounded-lg p-6 border border-[#e3d4bf] dark:border-transparent 
@@ -668,17 +741,6 @@ export default function CaseHistory() {
                   <span className="mx-2 opacity-30">|</span>
                   <span>Date: {c.date}</span>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); void openCaseDetails(c.id) }}
-                  className="flex items-center gap-1 text-[#0f1e3f] font-bold text-sm hover:underline"
-                >
-                  View Details
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
-                  </svg>
-                </button>
               </div>
             </div>
           ))}
@@ -693,117 +755,46 @@ export default function CaseHistory() {
         <Dialog.Root open={!!selectedCase} onOpenChange={(open) => { if (!open) setSelectedCase(null) }}>
           <Dialog.Portal>
             <Dialog.Overlay className="fixed inset-0 bg-black/40 backdrop-blur-[1px] z-[9998]" />
-            <Dialog.Content className="fixed left-1/2 top-1/2 w-[92vw] max-w-[760px] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white dark:bg-[#0a152e] border border-[#e3d4bf] dark:border-[#cdaa80]/25 shadow-2xl p-5 md:p-6 z-[9999]">
-              <div className="flex items-start justify-between gap-4">
+            <Dialog.Content className="fixed left-1/2 top-1/2 w-[92vw] max-w-[800px] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white dark:bg-[#0a152e] border border-[#e3d4bf] dark:border-[#cdaa80]/25 shadow-2xl p-5 md:p-6 z-[9999]">
+              <div className="flex items-start justify-between gap-4 border-b border-[#e7d9c7] dark:border-[#cdaa80]/20 pb-4">
                 <div>
                   <Dialog.Title className="text-lg md:text-xl font-serif text-[#997953] dark:text-[#cdaa80]">
                     {selectedCase?.title ?? 'Untitled Case'}
                   </Dialog.Title>
                   <Dialog.Description className="mt-1 text-sm font-sans text-[#5b4b3d] dark:text-white/70">
-                    {selectedCase ? selectedCase.domain.replace(/_/g, ' ') : ''}
+                    {selectedCase ? selectedCase.domain?.replace(/_/g, ' ') : ''}
                   </Dialog.Description>
                 </div>
                 <Dialog.Close className="rounded-lg px-3 py-1.5 text-sm font-sans border border-[#d8c1a1] dark:border-[#cdaa80]/30 hover:bg-[#f9f4ec] dark:hover:bg-[#12284f]">
-                  Close
+                  ✕
                 </Dialog.Close>
               </div>
 
               {selectedCase && (
-                <div className="mt-4 space-y-4">
-                  <div className="text-sm font-sans text-[#2f261f] dark:text-white/85 leading-relaxed">
-                    {selectedCase.incident_description ?? 'No description provided.'}
-                  </div>
-
-                  <div className="rounded-xl border border-[#e7d9c7] dark:border-[#cdaa80]/20 p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="text-[11px] uppercase tracking-wide font-bold text-[#997953] dark:text-[#cdaa80]">
-                        Offers from lawyers
+                <div className="mt-4">
+                    {analysisLoading ? (
+                      <div className="text-sm text-[#5b4b3d] dark:text-white/70 p-8 text-center">
+                        <p className="mb-2">Loading analysis...</p>
+                        <div className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-[#997953] border-r-transparent"></div>
                       </div>
+                    ) : analysisError ? (
+                      <div className="text-sm text-[#5b4b3d] dark:text-white/70 p-4 text-center space-y-2">
+                        <p>{analysisError}</p>
+                        <p className="text-[12px] text-[#7b5f40] dark:text-white/55">
+                          Open this case in chat and trigger a fresh complete analysis to sync it.
+                        </p>
+                      </div>
+                    ) : caseAnalysis ? (
+                    <AnalysisModal
+                        analysis={caseAnalysis}
+                      caseTitle={selectedCase.title || 'Case'}
+                      caseDomain={selectedCase.domain || 'General'}
+                    />
+                  ) : (
+                    <div className="text-sm text-[#5b4b3d] dark:text-white/70 p-4 text-center">
+                      AI analysis not yet available for this case. Check back soon!
                     </div>
-
-                    {offersError && (
-                      <div className="mt-2 text-sm font-sans text-red-500">
-                        {offersError}
-                      </div>
-                    )}
-
-                    {offersLoading ? (
-                      <div className="mt-3 text-sm font-sans text-[#5b4b3d] dark:text-white/70">
-                        Loading offers…
-                      </div>
-                    ) : offers.length === 0 ? (
-                      <div className="mt-3 text-sm font-sans text-[#5b4b3d] dark:text-white/70">
-                        No offers yet.
-                      </div>
-                    ) : (
-                      <div className="mt-3 space-y-2">
-                        {offers.map((o) => (
-                          <div
-                            key={o.id}
-                            className="rounded-lg border border-[#e7d9c7] dark:border-[#cdaa80]/20 px-3 py-2 bg-[#fdf9f3] dark:bg-[#12284f]/70"
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0">
-                                <div className="text-sm font-sans text-[#2f261f] dark:text-white/85 font-medium">
-                                  {typeof o.offer_amount === 'number' ? `₹${o.offer_amount.toLocaleString('en-IN')}` : 'Offer received'}
-                                </div>
-                                {(() => {
-                                  const offerText = (o as { offer_message?: string; offer_note?: string }).offer_message ?? o.offer_note
-                                  if (!offerText) return null
-                                  return (
-                                    <div className="mt-1 text-[12px] font-sans text-[#5b4b3d] dark:text-white/70 break-words">
-                                      {offerText}
-                                    </div>
-                                  )
-                                })()}
-                                <div className="mt-1 text-[11px] font-sans text-[#5b4b3d] dark:text-white/60">
-                                  {o.offer_sent_at ? new Date(o.offer_sent_at).toLocaleString('en-IN') : ''}
-                                </div>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => { void handleAcceptOffer(o.id) }}
-                                className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-sans border border-[#0f1e3f]/25 bg-[#0f1e3f] text-[#cdaa80] hover:bg-[#0f1e3f]/90 ${acceptingOfferId === o.id ? 'opacity-60 pointer-events-none' : ''}`}
-                              >
-                                {acceptingOfferId === o.id ? 'Accepting…' : 'Accept'}
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="rounded-xl border border-[#e7d9c7] dark:border-[#cdaa80]/20 p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="text-[11px] uppercase tracking-wide font-bold text-[#997953] dark:text-[#cdaa80]">
-                        AI case draft (from chatbot)
-                      </div>
-                    </div>
-
-                    <div className="mt-3 space-y-3">
-                      <div className="text-[11px] uppercase tracking-wide font-bold text-[#0f1e3f]/60 dark:text-white/60">
-                        Case brief
-                      </div>
-                      <pre className="whitespace-pre-wrap break-words rounded-lg border border-[#e7d9c7] dark:border-[#cdaa80]/20 px-3 py-2 bg-[#fdf9f3] dark:bg-[#12284f]/70 text-[12px] font-sans text-[#2f261f] dark:text-white/85">
-                        {selectedCase?.case_brief ? JSON.stringify(selectedCase.case_brief, null, 2) : 'Not available yet.'}
-                      </pre>
-
-                      <div className="text-[11px] uppercase tracking-wide font-bold text-[#0f1e3f]/60 dark:text-white/60">
-                        Evidence inventory
-                      </div>
-                      <pre className="whitespace-pre-wrap break-words rounded-lg border border-[#e7d9c7] dark:border-[#cdaa80]/20 px-3 py-2 bg-[#fdf9f3] dark:bg-[#12284f]/70 text-[12px] font-sans text-[#2f261f] dark:text-white/85">
-                        {selectedCase?.evidence_inventory ? JSON.stringify(selectedCase.evidence_inventory, null, 2) : 'Not available yet.'}
-                      </pre>
-
-                      <div className="text-[11px] uppercase tracking-wide font-bold text-[#0f1e3f]/60 dark:text-white/60">
-                        Recommended strategy
-                      </div>
-                      <pre className="whitespace-pre-wrap break-words rounded-lg border border-[#e7d9c7] dark:border-[#cdaa80]/20 px-3 py-2 bg-[#fdf9f3] dark:bg-[#12284f]/70 text-[12px] font-sans text-[#2f261f] dark:text-white/85">
-                        {selectedCase?.recommended_strategy ? JSON.stringify(selectedCase.recommended_strategy, null, 2) : 'Not available yet.'}
-                      </pre>
-                    </div>
-                  </div>
+                  )}
                 </div>
               )}
             </Dialog.Content>
