@@ -28,6 +28,14 @@ class Settings(BaseSettings):
     PIPELINE_TIMEOUT_SECONDS: int = 45
     PIPELINE_CONFIDENCE_THRESHOLD: float = 0.6
 
+    # Neo4j Graph (optional, default OFF)
+    NEO4J_GRAPH_ENABLED: bool = False
+    NEO4J_URI: str = "bolt://localhost:7687"
+    NEO4J_USER: str = "neo4j"
+    NEO4J_PASSWORD: str = ""
+    NEO4J_DATABASE: str = "neo4j"
+    NEO4J_CORPUS_PATH: str = "app/data/corpus"
+
     class Config:
         env_file = ".env"
         extra = "allow"

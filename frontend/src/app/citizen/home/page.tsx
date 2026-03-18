@@ -12,6 +12,7 @@ import { useVoiceRecorder } from '@/hooks/useVoiceRecorder';
 import { toast } from 'sonner';
 import { getNotifications, markAllNotificationsRead, markNotificationRead, subscribeToNotifications } from '@/lib/db/notifications';
 import type { Database } from '@/types/supabase';
+import { ChatAnalysisCard } from '@/components/ChatAnalysisCard';
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001').replace(/\/$/, '')
 
@@ -47,6 +48,8 @@ export default function CitizenHome() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [caseId, setCaseId] = useState<string | null>(null);
+<<<<<<< HEAD
+=======
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
   const [isTranscribing, setIsTranscribing] = useState(false);
   
@@ -58,6 +61,7 @@ export default function CitizenHome() {
     stopRecording,
     resetRecording
   } = useVoiceRecorder();
+>>>>>>> 5ac425bff629d3cafd5c60cf881f08cc581d3ea3
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [notificationLoading, setNotificationLoading] = useState(false);
   const [notifications, setNotifications] = useState<NotificationRow[]>([]);
@@ -69,6 +73,17 @@ export default function CitizenHome() {
   const inputBarRef = useRef<HTMLDivElement>(null);
   const iconsRef = useRef<HTMLDivElement>(null);
   const notificationRef = useRef<HTMLDivElement>(null);
+
+  const syncCaseToDashboard = async (caseIdToSync: string) => {
+    try {
+      await axios.post(`${BACKEND_URL}/save_case/${caseIdToSync}`);
+      console.log('Case successfully synced to dashboard');
+      return true;
+    } catch (error) {
+      console.error('Failed to sync case to dashboard:', error);
+      return false;
+    }
+  };
 
   const onlyLawyerAcceptance = (rows: NotificationRow[]) =>
     rows.filter((row) => {
@@ -298,6 +313,11 @@ export default function CitizenHome() {
         })
 
         await setActiveCaseForUser(user.id, newCaseId)
+
+        // Ensure analysis is available in backend case-history storage as soon as it is complete.
+        if (isComplete) {
+          await syncCaseToDashboard(newCaseId)
+        }
       }
 
       let aiMessage: Message = {
@@ -342,16 +362,6 @@ export default function CitizenHome() {
       setMessages(prev => [...prev, errorMessage]);
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const handleDownloadSync = async () => {
-    if (!caseId) return;
-    try {
-      await axios.post(`http://localhost:8001/save_case/${caseId}`);
-      console.log("Case successfully synced to dashboard");
-    } catch (error) {
-      console.error("Failed to sync case to dashboard:", error);
     }
   };
 
@@ -509,244 +519,17 @@ export default function CitizenHome() {
 
                 {/* Analysis Result Card */}
                 {msg.type === 'analysis_result' && msg.metadata && (
-                  <div className="mt-6 p-5 rounded-xl bg-gradient-to-br from-[#997953]/10 to-transparent dark:from-[#cdaa80]/10 dark:to-transparent border border-[#997953]/20 dark:border-[#cdaa80]/20 shadow-inner">
-                    <div className="flex items-center justify-between mb-4">
-                      <span className="text-[11px] uppercase tracking-[2px] font-bold text-[#997953] dark:text-[#cdaa80]">Legal Perspective</span>
-                      <span className={`text-[11px] px-3 py-1 rounded-full font-bold uppercase tracking-wider ${
-                        msg.metadata.standing === 'strong' ? 'bg-green-500/10 text-green-600 dark:text-green-400 border border-green-500/20' : 
-                        msg.metadata.standing === 'moderate' ? 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border border-yellow-500/20' : 
-                        'bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20'
-                      }`}>
-                        {msg.metadata.standing} Standing
-                      </span>
-                    </div>
-                    <div className="space-y-4">
-                      <div>
-                        <h4 className="text-[13px] font-semibold text-gray-500 dark:text-white/40 mb-1">Case Summary</h4>
-                        <p className="text-[14px] text-gray-700 dark:text-white/80 leading-relaxed italic line-clamp-3">
-                          &quot;{msg.metadata.summary}&quot;
-                        </p>
-                      </div>
-
-                      {/* Toggle Button */}
-                      <div className="pt-2">
-                        <button 
-                          onClick={() => {
-                            setExpandedCards(prev => {
-                              const next = new Set(prev);
-                              next.has(msg.id) ? next.delete(msg.id) : next.add(msg.id);
-                              return next;
-                            });
-                          }}
-                          className="text-[13px] font-medium text-[#997953] dark:text-[#cdaa80] hover:underline underline-offset-4 flex items-center gap-1 group cursor-pointer"
-                        >
-                          {expandedCards.has(msg.id) ? 'Collapse Details' : 'View Full Action Plan'}
-                          <svg className={`w-4 h-4 transition-transform duration-300 ${expandedCards.has(msg.id) ? 'rotate-90' : 'group-hover:translate-x-1'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
-                          </svg>
-                        </button>
-                      </div>
-
-                      {/* Expanded Content */}
-                      {expandedCards.has(msg.id) && (
-                        <div className="mt-4 space-y-6 border-t border-[#997953]/10 dark:border-[#cdaa80]/10 pt-6 animate-message">
-
-                          {/* ─── Action Plan Steps ─── */}
-                          {msg.metadata.actionPlan && (
-                            <div>
-                              <h4 className="text-[12px] uppercase tracking-[1.5px] font-bold text-[#997953] dark:text-[#cdaa80] mb-3">Action Plan</h4>
-                              
-                              {/* Immediate Steps */}
-                              {msg.metadata.actionPlan.immediate?.length > 0 && (
-                                <div className="mb-4">
-                                  <span className="text-[11px] uppercase tracking-wider font-semibold text-red-500 dark:text-red-400 mb-2 block">⚡ Immediate Steps</span>
-                                  <div className="space-y-2">
-                                    {msg.metadata.actionPlan.immediate.map((step: any, i: number) => (
-                                      <div key={i} className="p-3 rounded-lg bg-white/50 dark:bg-[#0f1e3f]/50 border border-gray-200/50 dark:border-white/5">
-                                        <div className="flex items-start justify-between gap-2">
-                                          <span className="text-[14px] font-medium text-gray-800 dark:text-white">{step.step}</span>
-                                          <span className={`text-[10px] px-2 py-0.5 rounded-full shrink-0 font-bold uppercase ${
-                                            step.priority === 'high' ? 'bg-red-500/10 text-red-600 dark:text-red-400' : 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400'
-                                          }`}>{step.priority}</span>
-                                        </div>
-                                        <p className="text-[13px] text-gray-600 dark:text-white/60 mt-1">{step.description}</p>
-                                        <span className="text-[11px] text-gray-400 dark:text-white/30 mt-1 block">⏱ {step.deadline}</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* Medium-Term Steps */}
-                              {msg.metadata.actionPlan.medium_term?.length > 0 && (
-                                <div className="mb-4">
-                                  <span className="text-[11px] uppercase tracking-wider font-semibold text-blue-500 dark:text-blue-400 mb-2 block">📋 Medium-Term Steps</span>
-                                  <div className="space-y-2">
-                                    {msg.metadata.actionPlan.medium_term.map((step: any, i: number) => (
-                                      <div key={i} className="p-3 rounded-lg bg-white/50 dark:bg-[#0f1e3f]/50 border border-gray-200/50 dark:border-white/5">
-                                        <span className="text-[14px] font-medium text-gray-800 dark:text-white">{step.step}</span>
-                                        <p className="text-[13px] text-gray-600 dark:text-white/60 mt-1">{step.description}</p>
-                                        <span className="text-[11px] text-gray-400 dark:text-white/30 mt-1 block">⏱ {step.deadline}</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* Key Metrics Row */}
-                              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
-                                <div className="p-3 rounded-lg bg-white/30 dark:bg-[#0f1e3f]/30 border border-gray-200/30 dark:border-white/5 text-center">
-                                  <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-white/30 block">Forum</span>
-                                  <span className="text-[12px] font-medium text-gray-800 dark:text-white mt-1 block">{msg.metadata?.actionPlan?.forum_selection || 'N/A'}</span>
-                                </div>
-                                <div className="p-3 rounded-lg bg-white/30 dark:bg-[#0f1e3f]/30 border border-gray-200/30 dark:border-white/5 text-center">
-                                  <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-white/30 block">Timeline</span>
-                                  <span className="text-[12px] font-medium text-gray-800 dark:text-white mt-1 block">{msg.metadata?.actionPlan?.timeline_estimate || 'N/A'}</span>
-                                </div>
-                                <div className="p-3 rounded-lg bg-white/30 dark:bg-[#0f1e3f]/30 border border-gray-200/30 dark:border-white/5 text-center">
-                                  <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-white/30 block">Est. Cost</span>
-                                  <span className="text-[12px] font-medium text-gray-800 dark:text-white mt-1 block">{msg.metadata?.actionPlan?.cost_estimate || 'N/A'}</span>
-                                </div>
-                                <div className="p-3 rounded-lg bg-white/30 dark:bg-[#0f1e3f]/30 border border-gray-200/30 dark:border-white/5 text-center">
-                                  <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-white/30 block">Lawyer</span>
-                                  <span className={`text-[12px] font-medium mt-1 block ${msg.metadata?.actionPlan?.lawyer_recommended ? 'text-red-500' : 'text-green-500'}`}>
-                                    {msg.metadata?.actionPlan?.lawyer_recommended ? 'Recommended' : 'Not Required'}
-                                  </span>
-                                  {msg.metadata?.actionPlan?.lawyer_recommended && (
-                                    <NextLink 
-                                      href={`/citizen/market_place?type=${msg.metadata?.incidentType || 'other'}`}
-                                      className="mt-2 text-[10px] font-semibold text-[#997953] dark:text-[#cdaa80] border border-[#997953]/30 dark:border-[#cdaa80]/30 px-2 py-1 rounded-md hover:bg-[#997953]/10 dark:hover:bg-[#cdaa80]/10 transition-colors inline-block"
-                                    >
-                                      View {msg.metadata?.incidentType?.replace('_', ' ') || ''} Lawyers
-                                    </NextLink>
-                                  )}
-                                </div>
-                              </div>
-
-                              {/* Evidence Checklist */}
-                              {msg.metadata?.actionPlan?.evidence_checklist?.length > 0 && (
-                                <div className="mt-4">
-                                  <span className="text-[11px] uppercase tracking-wider font-semibold text-gray-500 dark:text-white/40 mb-2 block">📎 Evidence Checklist</span>
-                                  <ul className="space-y-1">
-                                    {msg.metadata?.actionPlan?.evidence_checklist.map((item: string, i: number) => (
-                                      <li key={i} className="text-[13px] text-gray-600 dark:text-white/60 flex items-center gap-2">
-                                        <span className="w-1.5 h-1.5 rounded-full bg-[#cdaa80] shrink-0"></span>
-                                        {item}
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </div>
-                              )}
-                            </div>
-                          )}
-
-                          {/* ─── Applicable Legal Sections ─── */}
-                          {msg.metadata.legalMapping?.applicable_sections?.length > 0 && (
-                            <div>
-                              <h4 className="text-[12px] uppercase tracking-[1.5px] font-bold text-[#997953] dark:text-[#cdaa80] mb-3">Applicable Legal Sections</h4>
-                              <div className="space-y-2">
-                                {msg.metadata.legalMapping.applicable_sections.map((s: any, i: number) => (
-                                  <details key={i} className="group rounded-lg bg-white/50 dark:bg-[#0f1e3f]/50 border border-gray-200/50 dark:border-white/5 overflow-hidden">
-                                    <summary className="p-3 cursor-pointer flex items-center justify-between text-[13px] font-medium text-gray-800 dark:text-white hover:bg-white/30 dark:hover:bg-white/5 transition-colors">
-                                      <span>📜 {s.section_ref}</span>
-                                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
-                                        s.confidence === 'high' ? 'bg-green-500/10 text-green-600' : 
-                                        s.confidence === 'medium' ? 'bg-yellow-500/10 text-yellow-600' : 'bg-red-500/10 text-red-600'
-                                      }`}>{s.confidence}</span>
-                                    </summary>
-                                    <div className="px-3 pb-3 text-[12px] text-gray-600 dark:text-white/50 leading-relaxed border-t border-gray-100 dark:border-white/5 pt-2">
-                                      {s.description?.substring(0, 300)}{s.description?.length > 300 ? '...' : ''}
-                                    </div>
-                                  </details>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* ─── Generated Documents ─── */}
-                          {msg.metadata.generatedDocuments && (
-                            <div>
-                              <h4 className="text-[12px] uppercase tracking-[1.5px] font-bold text-[#997953] dark:text-[#cdaa80] mb-3">Generated Documents</h4>
-                              <div className="space-y-3">
-                                {Object.entries(msg.metadata.generatedDocuments).map(([key, doc]: [string, any]) => {
-                                  if (!doc || !doc.content_md) return null;
-                                  return (
-                                    <details key={key} className="group rounded-lg bg-white/50 dark:bg-[#0f1e3f]/50 border border-gray-200/50 dark:border-white/5 overflow-hidden">
-                                      <summary className="p-3 cursor-pointer flex items-center justify-between text-[13px] font-medium text-gray-800 dark:text-white hover:bg-white/30 dark:hover:bg-white/5 transition-colors">
-                                        <span>📄 {key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</span>
-                                        <div className="flex items-center gap-2">
-                                          {doc.pdf_url && (
-                                            <a 
-                                              href={`http://localhost:8001/download/${doc.pdf_url.split(/[\\/]/).pop()}`} 
-                                              download 
-                                              className="text-[10px] px-2 py-1 rounded bg-[#997953]/10 dark:bg-[#cdaa80]/10 text-[#997953] dark:text-[#cdaa80] font-bold uppercase hover:bg-[#997953]/20 dark:hover:bg-[#cdaa80]/20 transition-colors" 
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                handleDownloadSync();
-                                              }}
-                                            >
-                                              PDF ↓
-                                            </a>
-                                          )}
-                                          {doc.docx_url && (
-                                            <a 
-                                              href={`http://localhost:8001/download/${doc.docx_url.split(/[\\/]/).pop()}`} 
-                                              download 
-                                              className="text-[10px] px-2 py-1 rounded bg-[#997953]/10 dark:bg-[#cdaa80]/10 text-[#997953] dark:text-[#cdaa80] font-bold uppercase hover:bg-[#997953]/20 dark:hover:bg-[#cdaa80]/20 transition-colors" 
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                handleDownloadSync();
-                                              }}
-                                            >
-                                              DOCX ↓
-                                            </a>
-                                          )}
-                                        </div>
-                                      </summary>
-                                      <div className="px-4 pb-4 text-[12px] text-gray-700 dark:text-white/70 leading-relaxed border-t border-gray-100 dark:border-white/5 pt-3 whitespace-pre-wrap font-mono max-h-[300px] overflow-y-auto custom-scrollbar">
-                                        {doc.content_md}
-                                      </div>
-                                    </details>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* ─── Reasoning Trace ─── */}
-                          {msg.metadata.reasoningTrace && (
-                            <div>
-                              <h4 className="text-[12px] uppercase tracking-[1.5px] font-bold text-[#997953] dark:text-[#cdaa80] mb-3">AI Reasoning</h4>
-                              <div className="space-y-3">
-                                <div className="flex items-center gap-3">
-                                  <span className={`text-[11px] px-3 py-1 rounded-full font-bold uppercase ${
-                                    msg.metadata.reasoningTrace.overall_confidence === 'high' ? 'bg-green-500/10 text-green-600 border border-green-500/20' : 
-                                    msg.metadata.reasoningTrace.overall_confidence === 'medium' ? 'bg-yellow-500/10 text-yellow-600 border border-yellow-500/20' : 
-                                    'bg-red-500/10 text-red-600 border border-red-500/20'
-                                  }`}>Confidence: {msg.metadata.reasoningTrace.overall_confidence}</span>
-                                </div>
-                                {msg.metadata.reasoningTrace.legal_standing_breakdown && (
-                                  <p className="text-[13px] text-gray-600 dark:text-white/60 leading-relaxed">
-                                    {msg.metadata.reasoningTrace.legal_standing_breakdown}
-                                  </p>
-                                )}
-                                {msg.metadata.reasoningTrace.agent_logs?.length > 0 && (
-                                  <details className="rounded-lg bg-white/30 dark:bg-[#0f1e3f]/30 border border-gray-200/30 dark:border-white/5">
-                                    <summary className="p-2 cursor-pointer text-[11px] font-medium text-gray-500 dark:text-white/40 hover:text-gray-700 dark:hover:text-white/60">Agent Activity Log ({msg.metadata.reasoningTrace.agent_logs.length} entries)</summary>
-                                    <div className="px-3 pb-3 space-y-1">
-                                      {msg.metadata.reasoningTrace.agent_logs.map((log: string, i: number) => (
-                                        <p key={i} className="text-[11px] text-gray-500 dark:text-white/40 font-mono">{log}</p>
-                                      ))}
-                                    </div>
-                                  </details>
-                                )}
-                              </div>
-                            </div>
-                          )}
-
-                        </div>
-                      )}
-                    </div>
+                  <div className="mt-6">
+                    <ChatAnalysisCard
+                      itemId={msg.id}
+                      metadata={msg.metadata}
+                      backendUrl={BACKEND_URL}
+                      onDownloadSync={async () => {
+                        if (caseId) {
+                          await syncCaseToDashboard(caseId);
+                        }
+                      }}
+                    />
                   </div>
                 )}
               </div>
