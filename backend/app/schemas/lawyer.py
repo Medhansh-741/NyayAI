@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional
 from enum import Enum
 from datetime import datetime
+from app.schemas.domain_utils import ensure_known_domain
 
 
 # ══════════════════════════════════════════════════════════════
@@ -26,6 +27,22 @@ class LegalDomain(str, Enum):
     rti                   = "rti"
     corruption            = "corruption"
     other                 = "other"
+    banking_finance       = "banking_finance"
+    insurance             = "insurance"
+    matrimonial           = "matrimonial"
+    immigration           = "immigration"
+    environmental         = "environmental"
+    medical_negligence    = "medical_negligence"
+    motor_accident        = "motor_accident"
+    cheque_bounce         = "cheque_bounce"
+    debt_recovery         = "debt_recovery"
+    arbitration           = "arbitration"
+    service_matters       = "service_matters"
+    land_acquisition      = "land_acquisition"
+    wills_succession      = "wills_succession"
+    domestic_violence     = "domestic_violence"
+    pocso                 = "pocso"
+    sc_st_atrocities      = "sc_st_atrocities"
 
 
 class VerificationStatus(str, Enum):
@@ -167,6 +184,24 @@ class LawyerProfileBase(BaseModel):
     response_time_hours:  Optional[int]             = None
     profile_photo_url:    Optional[str]             = None
     is_available:         Optional[bool]            = None
+
+    @field_validator('specialisations', mode='before')
+    @classmethod
+    def normalize_specialisations(cls, v):
+        if v is None:
+            return v
+        if not isinstance(v, list):
+            raise ValueError('specialisations must be a list')
+
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in v:
+            canonical = ensure_known_domain(item)
+            if canonical in seen:
+                continue
+            seen.add(canonical)
+            normalized.append(canonical)
+        return normalized
 
     @field_validator('specialisations')
     @classmethod
@@ -380,6 +415,13 @@ class LawyerFilterParams(BaseModel):
         "rating",
         pattern="^(rating|experience|fee_low|fee_high|reviews)$"
     )
+
+    @field_validator('domain', mode='before')
+    @classmethod
+    def normalize_domain_filter(cls, v):
+        if v is None:
+            return v
+        return ensure_known_domain(v)
 
 
 # ══════════════════════════════════════════════════════════════

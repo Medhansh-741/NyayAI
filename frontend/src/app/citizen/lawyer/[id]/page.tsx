@@ -14,6 +14,7 @@ import { createBriefDispatch } from '@/lib/db/dispatches';
 import { getCitizenCases } from '@/lib/db/cases';
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Select from '@radix-ui/react-select'
+import { canonicalizeDomain, toDomainLabel } from '@/lib/utils/domain';
 
 // Register ScrollTrigger plugin
 if (typeof window !== 'undefined') {
@@ -43,8 +44,6 @@ export default function LawyerProfilePage({ params }: { params: Promise<{ id: st
   const [introDirty, setIntroDirty] = useState(false)
 
   const requestedDomain = (searchParams.get('domain') || searchParams.get('type') || '').trim();
-
-  const normalizeDomain = (value: string | null | undefined) => (value ?? '').trim().toLowerCase();
 
   const buildIntroDraft = (c: Database['public']['Tables']['cases']['Row'] | null) => {
     const titlePart = c?.title ? `: "${c.title}"` : ''
@@ -177,11 +176,11 @@ export default function LawyerProfilePage({ params }: { params: Promise<{ id: st
         return
       }
 
-      const lawyerDomains = new Set((lawyer?.specialisations ?? []).map((entry) => normalizeDomain(entry)))
-      const browserDomain = normalizeDomain(requestedDomain)
+      const lawyerDomains = new Set((lawyer?.specialisations ?? []).map((entry) => canonicalizeDomain(entry)).filter(Boolean))
+      const browserDomain = canonicalizeDomain(requestedDomain)
 
       let scoped = list.filter((c) => {
-        const caseDomain = normalizeDomain(String(c.domain ?? ''))
+        const caseDomain = canonicalizeDomain(String(c.domain ?? ''))
         if (!caseDomain) return false
         if (lawyerDomains.size > 0 && !lawyerDomains.has(caseDomain)) return false
         if (browserDomain && caseDomain !== browserDomain) return false
@@ -191,10 +190,10 @@ export default function LawyerProfilePage({ params }: { params: Promise<{ id: st
       setFilteredCases(scoped)
 
       if (scoped.length === 0) {
-        const lawyerDomainText = (lawyer?.specialisations ?? []).map((d) => d.replace(/_/g, ' ')).join(', ')
+        const lawyerDomainText = (lawyer?.specialisations ?? []).map((d) => toDomainLabel(d)).join(', ')
         setRequestMsg(
           browserDomain
-            ? `No matching cases found for the selected domain (${browserDomain.replace(/_/g, ' ')}). Please create a case in this domain before requesting this lawyer.`
+            ? `No matching cases found for the selected domain (${toDomainLabel(browserDomain)}). Please create a case in this domain before requesting this lawyer.`
             : lawyerDomainText
               ? `No matching cases found for this lawyer's domains (${lawyerDomainText}). Please create or select a case in one of these domains.`
               : 'No matching cases found for this lawyer. Please create a relevant case in chatbot first.'
@@ -429,7 +428,7 @@ export default function LawyerProfilePage({ params }: { params: Promise<{ id: st
                               </div>
                               {requestedDomain && (
                                 <div className="mt-2 inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-sans bg-[#f4eadc] dark:bg-[#213a56] text-[#5e4c3a] dark:text-[#d8c09c] border border-[#e5d4bc] dark:border-[#cdaa80]/30">
-                                  Browsing domain: {requestedDomain.replace(/_/g, ' ')}
+                                  Browsing domain: {toDomainLabel(requestedDomain)}
                                 </div>
                               )}
                               <div className="mt-2">

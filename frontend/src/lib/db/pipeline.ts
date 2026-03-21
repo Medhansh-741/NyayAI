@@ -1,6 +1,26 @@
 import { supabase } from '@/lib/supabase/client'
 import type { Enums } from '@/types/supabase'
 import { createNotification } from '@/lib/db/notifications'
+import { getBackendUrl } from '@/lib/utils/backendUrl'
+
+const BACKEND_URL = getBackendUrl()
+const ACCEPT_OFFER_TIMEOUT_MS = 12000
+
+function mapAcceptOfferNetworkError(error: unknown): Error {
+  if (error instanceof DOMException && error.name === 'AbortError') {
+    return new Error('Accept offer request timed out. Please try again.')
+  }
+
+  if (error instanceof TypeError || (error instanceof Error && /failed to fetch/i.test(error.message))) {
+    return new Error(`Unable to reach the case service at ${BACKEND_URL}. Please check backend connectivity and try again.`)
+  }
+
+  if (error instanceof Error) {
+    return new Error('Could not complete offer acceptance due to a network issue. Please try again.')
+  }
+
+  return new Error('Could not complete offer acceptance right now. Please try again.')
+}
 
 export async function createOffer(lawyerId: string, payload: {
   case_id: string
@@ -80,72 +100,53 @@ export async function withdrawOffer(pipelineId: string) {
 }
 
 export async function acceptOffer(pipelineId: string, caseId: string) {
-  const { data: existingPipeline, error: existingErr } = await supabase
-    .from('case_pipeline')
-    .select('id, case_id, lawyer_id, offer_amount')
-    .eq('id', pipelineId)
-    .maybeSingle()
+  const {
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.getSession()
 
-  if (existingErr) return { data: null, error: existingErr }
-  if (!existingPipeline) return { data: null, error: new Error('Offer not found.') }
-
-  const { data: caseRow, error: caseReadErr } = await supabase
-    .from('cases')
-    .select('id, title, citizen_id')
-    .eq('id', caseId)
-    .maybeSingle()
-
-  if (caseReadErr) return { data: null, error: caseReadErr }
-
-  // Accept the offer
-  const { data, error } = await supabase
-    .from('case_pipeline')
-    .update({
-      stage: 'accepted',
-      accepted_at: new Date().toISOString()
-    })
-    .eq('id', pipelineId)
-    .select()
-    .single()
-
-  if (error) return { data, error }
-
-  // Any other pending offers for this case are auto-withdrawn once one offer is accepted.
-  await supabase
-    .from('case_pipeline')
-    .update({ stage: 'withdrawn' })
-    .eq('case_id', caseId)
-    .eq('stage', 'offered')
-    .neq('id', pipelineId)
-
-  // Update case status
-  await supabase
-    .from('cases')
-    .update({
-      status: 'lawyer_matched',
-      lawyer_matched_at: new Date().toISOString(),
-      is_seeking_lawyer: false,
-    })
-    .eq('id', caseId)
-
-  if (existingPipeline.lawyer_id && caseRow) {
-    const amount = existingPipeline.offer_amount
-      ? ` (Offer: INR ${existingPipeline.offer_amount.toLocaleString('en-IN')})`
-      : ''
-
-    await createNotification({
-      user_id: existingPipeline.lawyer_id,
-      type: 'offer_accepted',
-      title: 'Your offer was accepted',
-      body: `${caseRow.title ?? 'A case'} has accepted your offer${amount}.`,
-      data: {
-        case_id: caseRow.id,
-        pipeline_id: pipelineId,
-      },
-    })
+  if (sessionError || !session?.access_token) {
+    return { data: null, error: sessionError || new Error('You must be logged in to accept an offer.') }
   }
 
-  return { data, error }
+  let timeout: ReturnType<typeof setTimeout> | null = null
+  try {
+    const controller = new AbortController()
+    timeout = setTimeout(() => controller.abort(), ACCEPT_OFFER_TIMEOUT_MS)
+
+    const response = await fetch(`${BACKEND_URL}/pipeline/accept-offer`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({
+        pipeline_id: pipelineId,
+        case_id: caseId,
+      }),
+      signal: controller.signal,
+    })
+
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      let message = typeof payload?.detail === 'string' ? payload.detail : 'Failed to accept offer.'
+      if (response.status === 401 || response.status === 403) {
+        message = 'Your session expired. Please sign in again to accept this offer.'
+      } else if (response.status >= 500) {
+        message = 'Case service is temporarily unavailable. Please try again shortly.'
+      }
+      return { data: null, error: new Error(message) }
+    }
+
+    return { data: payload?.pipeline ?? null, error: null }
+  } catch (error) {
+    return {
+      data: null,
+      error: mapAcceptOfferNetworkError(error),
+    }
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
 }
 
 export async function acceptAvailableCase(caseId: string, lawyerId: string, note?: string) {

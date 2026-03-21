@@ -8,47 +8,9 @@ import { supabase } from '@/lib/supabase/client';
 import type { Database } from '@/types/supabase';
 import Link from 'next/link';
 import { PriceWheel } from '../../../../components/PriceWheel';
+import { canonicalizeDomain, isKnownDomain, listHasDomain, toDomainLabel } from '@/lib/utils/domain';
 
 type LawyerProfile = Database['public']['Tables']['lawyer_profiles']['Row'];
-
-const DOMAIN_LABELS: Record<string, string> = {
-  consumer:              'Consumer Disputes',
-  tenant:                'Tenant / Rent',
-  labour:                'Labour & Employment',
-  criminal:              'Criminal Law',
-  cyber:                 'Cyber Crime',
-  property:              'Property Law',
-  family:                'Family Law',
-  rti:                   'RTI',
-  corruption:            'Anti-Corruption',
-  civil:                 'Civil Law',
-  other:                 'General Practice',
-  tax:                   'Tax Law',
-  corporate:             'Corporate / Business',
-  intellectual_property: 'Intellectual Property',
-  constitutional:        'Constitutional / PIL',
-  banking_finance:       'Banking & Finance',
-  insurance:             'Insurance',
-  matrimonial:           'Matrimonial',
-  immigration:           'Immigration',
-  environmental:         'Environmental Law',
-  medical_negligence:    'Medical Negligence',
-  motor_accident:        'Motor Accident Claims',
-  cheque_bounce:         'Cheque Bounce (NI Act)',
-  debt_recovery:         'Debt Recovery',
-  arbitration:           'Arbitration & ADR',
-  service_matters:       'Service Matters',
-  land_acquisition:      'Land Acquisition',
-  wills_succession:      'Wills & Succession',
-  domestic_violence:     'Domestic Violence',
-  pocso:                 'POCSO',
-  sc_st_atrocities:      'SC/ST Atrocities Act',
-  divorce:               'Divorce',
-}
-
-function formatDomain(domain: string): string {
-  return DOMAIN_LABELS[domain] ?? domain.replace(/_/g, ' ')
-}
 
 function formatResponseTime(hours: number | null): string {
   if (!hours || hours <= 1)  return 'Responds within 1 hour'
@@ -102,8 +64,8 @@ function MarketplaceContent() {
   // Handle URL pre-filtering
   useEffect(() => {
     const typeParam = searchParams.get('type')
-    if (typeParam && DOMAIN_LABELS[typeParam]) {
-      setSelectedLawType(typeParam)
+    if (typeParam && isKnownDomain(typeParam)) {
+      setSelectedLawType(canonicalizeDomain(typeParam))
     }
   }, [searchParams])
 
@@ -192,7 +154,7 @@ function MarketplaceContent() {
   const priceOptions = useMemo(() => {
     let lawyers = allLawyers
     if (selectedLawType !== 'Law Type') {
-      lawyers = lawyers.filter(l => l.specialisations?.includes(selectedLawType as any))
+      lawyers = lawyers.filter((l) => listHasDomain(l.specialisations ?? [], selectedLawType))
     }
     if (selectedExperience !== 'Years in Practice') {
       const opt = experienceOptions.find(o => o.label === selectedExperience)
@@ -240,14 +202,17 @@ function MarketplaceContent() {
     lawyers     = lawyers.filter(l => !l.fee_min || l.fee_min <= maxP)
 
     const types = new Set<string>()
-    lawyers.forEach(l => l.specialisations?.forEach(s => types.add(s)))
+    lawyers.forEach((l) => l.specialisations?.forEach((s) => {
+      const canonical = canonicalizeDomain(s)
+      if (canonical) types.add(canonical)
+    }))
     return Array.from(types).sort()
   }, [allLawyers, selectedExperience, selectedPriceIndex, priceOptions, experienceOptions])
 
   const experienceLabels = useMemo(() => {
     let lawyers = allLawyers
     if (selectedLawType !== 'Law Type') {
-      lawyers = lawyers.filter(l => l.specialisations?.includes(selectedLawType as any))
+      lawyers = lawyers.filter((l) => listHasDomain(l.specialisations ?? [], selectedLawType))
     }
     const idx  = Math.min(selectedPriceIndex, priceOptions.length - 1)
     const maxP = parsePrice(priceOptions[idx] ?? '₹2L+')
@@ -277,7 +242,7 @@ function MarketplaceContent() {
     let result = [...allLawyers]
 
     if (selectedLawType !== 'Law Type') {
-      result = result.filter(l => l.specialisations?.includes(selectedLawType as any))
+      result = result.filter((l) => listHasDomain(l.specialisations ?? [], selectedLawType))
     }
 
     if (selectedExperience !== 'Years in Practice') {
@@ -412,7 +377,7 @@ function MarketplaceContent() {
                     onClick={() => { setSelectedLawType(type); setIsLawTypeOpen(false) }}
                     className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${selectedLawType === type ? 'bg-[#f6ede1] text-[#997953] font-medium dark:bg-[#cdaa80]/20 dark:text-[#cdaa80]' : 'text-[#5b4b3d] hover:bg-[#f8f1e7] hover:text-[#443831] dark:text-white/80 dark:hover:bg-[#213a56] dark:hover:text-[#cdaa80]'}`}
                   >
-                    {formatDomain(type)}
+                    {toDomainLabel(type)}
                   </button>
                 ))}
               </div>
@@ -495,7 +460,7 @@ function MarketplaceContent() {
             </div>
           ) : (
             filteredLawyers.map(lawyer => {
-              const primaryDomain  = lawyer.specialisations?.[0] ?? 'other'
+              const primaryDomain  = canonicalizeDomain(lawyer.specialisations?.[0] ?? 'other') || 'other'
               const priceRange     = formatFeeRange(lawyer.fee_min, lawyer.fee_max)
               const responseTime   = formatResponseTime(lawyer.response_time_hours)
               const displayName    = lawyer.full_name?.includes('Adv.')
@@ -504,7 +469,7 @@ function MarketplaceContent() {
 
               return (
                 <Link
-                  href={`/citizen/lawyer/${lawyer.id}?domain=${encodeURIComponent(selectedLawType !== 'Law Type' ? selectedLawType : primaryDomain)}`}
+                  href={`/citizen/lawyer/${lawyer.id}?domain=${encodeURIComponent(selectedLawType !== 'Law Type' ? canonicalizeDomain(selectedLawType) : primaryDomain)}`}
                   key={lawyer.id}
                   onMouseEnter={() => setHoveredCard(lawyer.id)}
                   onMouseLeave={() => setHoveredCard(null)}
@@ -518,7 +483,7 @@ function MarketplaceContent() {
                     <div className="flex-1 space-y-3">
                       <div className="flex justify-between items-start gap-4">
                         <span className="inline-block px-1.5 py-0.5 bg-[#0f1e3f]/10 rounded text-[10px] font-bold tracking-wider font-sans text-[#0f1e3f]/70 uppercase">
-                          {formatDomain(primaryDomain)}
+                          {toDomainLabel(primaryDomain)}
                         </span>
                         <div className="md:hidden text-right font-sans">
                           <div className="text-lg font-bold font-serif">{priceRange}</div>
@@ -542,7 +507,7 @@ function MarketplaceContent() {
                               key={spec}
                               className="px-2 py-0.5 bg-[#0f1e3f]/10 rounded-full text-[10px] font-sans text-[#0f1e3f]/60"
                             >
-                              {formatDomain(spec)}
+                              {toDomainLabel(spec)}
                             </span>
                           ))}
                         </div>

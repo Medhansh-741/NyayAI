@@ -3,14 +3,16 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import axios from 'axios';
 import { toast } from 'sonner';
-import { useVoiceRecorder } from '@/hooks/useVoiceRecorder';
+
 import { Sidebar } from '../../../../components/sidebar';
 import type { NavItem } from '../../../../components/sidebar';
 import gsap from 'gsap';
 import { supabase } from '@/lib/supabase/client';
+import type { Database } from '@/types/supabase';
+import { getBackendUrl } from '@/lib/utils/backendUrl';
 import { Menu, Home, Store, Gavel, X } from 'lucide-react';
 
-const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001').replace(/\/$/, '')
+const BACKEND_URL = getBackendUrl()
 import { useGSAP } from '@gsap/react';
 import * as Dialog from '@radix-ui/react-dialog';
 
@@ -50,6 +52,40 @@ const formatRelativeTime = (iso: string | null) => {
   return `${diffDay}d ago`;
 };
 
+type BriefDispatchRow = {
+  id: string
+  case_id: string
+  citizen_id: string
+  lawyer_id: string
+  intro_message: string
+  status: string
+  created_at: string | null
+}
+
+type BriefDispatchClient = {
+  from: (table: 'brief_dispatches') => {
+    select: (columns: string) => {
+      eq: (column: string, value: string) => {
+        in: (column: string, value: string[]) => {
+          order: (column: string, options: { ascending: boolean }) => Promise<{ data: BriefDispatchRow[] | null; error: { message: string } | null }>
+        }
+      }
+    }
+  }
+}
+
+type NotificationRow = Database['public']['Tables']['notifications']['Row']
+
+type LawyerBellNotification = {
+  id: string
+  caseId: string | null
+  title: string
+  body: string
+  createdAt: string | null
+  isRead: boolean
+  kind: 'dispatch' | 'system'
+}
+
 export default function LawyerHome() {
   const router = useRouter();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -64,66 +100,11 @@ export default function LawyerHome() {
   const [legalUpdates, setLegalUpdates] = useState<LegalUpdate[]>([]);
   const [loadingUpdates, setLoadingUpdates] = useState(false);
   const [updatesError, setUpdatesError] = useState<string | null>(null);
-  const inputBarRef = useRef<HTMLDivElement>(null);
-
-  const [input, setInput] = useState('');
-  const [isTranscribing, setIsTranscribing] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [notificationLoading, setNotificationLoading] = useState(false);
   const [notifications, setNotifications] = useState<LawyerBellNotification[]>([]);
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
   const notificationRef = useRef<HTMLDivElement | null>(null);
-
-  const {
-    isRecording,
-    audioBlob,
-    error: recorderError,
-    startRecording,
-    stopRecording,
-    resetRecording
-  } = useVoiceRecorder();
-
-  useEffect(() => {
-    if (recorderError) {
-      toast.error(recorderError);
-      resetRecording();
-    }
-  }, [recorderError, resetRecording]);
-
-  const handleTranscription = useCallback(async (blob: Blob) => {
-    setIsTranscribing(true);
-    resetRecording();
-
-    try {
-      const formData = new FormData();
-      formData.append('file', blob, 'voice_recording.webm');
-
-      const transcribeUrl = `${BACKEND_URL}/transcribe`;
-      
-      const response = await axios.post(transcribeUrl, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
-
-      if (response.data?.text) {
-        setInput(prev => prev ? `${prev} ${response.data.text}` : response.data.text);
-      } else {
-        toast.error("Could not transcribe audio. Please try again.");
-      }
-    } catch (err) {
-      console.error("Transcription error:", err);
-      toast.error("Failed to process voice input. Please ensure backend is running.");
-    } finally {
-      setIsTranscribing(false);
-    }
-  }, [resetRecording]);
-
-  useEffect(() => {
-    if (audioBlob) {
-      handleTranscription(audioBlob);
-    }
-  }, [audioBlob, handleTranscription]);
 
   const handleProfileClick = () => {
     router.push('/lawyerside/profile');
@@ -150,22 +131,62 @@ export default function LawyerHome() {
 
     const rows = dispatchRows ?? [];
     const caseIds = rows.map((row) => row.case_id);
+
+    const { data: notificationRows } = await supabase
+      .from('notifications')
+      .select('id, title, body, data, created_at, is_read, type')
+      .eq('user_id', lawyerId)
+      .in('type', ['offer_accepted', 'offer_received'])
+      .order('created_at', { ascending: false })
+      .limit(30);
+
+    (notificationRows ?? []).forEach((row) => {
+      const maybeCaseId = (row.data as Record<string, unknown> | null)?.case_id;
+      if (typeof maybeCaseId === 'string') {
+        caseIds.push(maybeCaseId);
+      }
+    });
+
     const { data: caseRows } = await supabase
       .from('cases')
       .select('id, title')
-      .in('id', caseIds);
+      .in('id', Array.from(new Set(caseIds)));
 
     const titleByCaseId = new Map((caseRows ?? []).map((row) => [row.id, row.title ?? 'your case']));
     const readIds = readIdsFromStorage(lawyerId);
 
-    const mapped: LawyerBellNotification[] = rows.map((row) => ({
-      id: row.id,
+    const dispatchMapped: LawyerBellNotification[] = rows.map((row) => ({
+      id: `dispatch:${row.id}`,
       caseId: row.case_id,
       title: 'New citizen request received',
       body: row.intro_message || `A citizen sent a request for ${titleByCaseId.get(row.case_id) ?? 'a case'}.`,
       createdAt: row.created_at,
-      isRead: readIds.has(row.id),
+      isRead: readIds.has(`dispatch:${row.id}`),
+      kind: 'dispatch',
     }));
+
+    const systemMapped: LawyerBellNotification[] = (notificationRows as NotificationRow[] | null ?? []).map((row) => {
+      const maybeData = row.data as Record<string, unknown> | null;
+      const caseId = typeof maybeData?.case_id === 'string' ? maybeData.case_id : null;
+      const fallbackTitle = caseId ? titleByCaseId.get(caseId) : null;
+      const body = row.body || (fallbackTitle ? `${fallbackTitle} has a case update.` : 'You have a new case update.');
+
+      return {
+        id: `notification:${row.id}`,
+        caseId,
+        title: row.title || 'Case update',
+        body,
+        createdAt: row.created_at,
+        isRead: row.is_read || readIds.has(`notification:${row.id}`),
+        kind: 'system',
+      };
+    });
+
+    const mapped = [...dispatchMapped, ...systemMapped].sort((a, b) => {
+      const aTs = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const bTs = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return bTs - aTs;
+    });
 
     setNotifications(mapped);
     setUnreadNotificationCount(mapped.filter((item) => !item.isRead).length);
@@ -193,7 +214,7 @@ export default function LawyerHome() {
     setNotifications((prev) => prev.map((entry) => (entry.id === item.id ? { ...entry, isRead: true } : entry)));
     setUnreadNotificationCount((prev) => Math.max(prev - (item.isRead ? 0 : 1), 0));
     setNotificationOpen(false);
-    router.push('/lawyerside/marketplace');
+    router.push(item.kind === 'system' ? '/lawyerside/my-cases' : '/lawyerside/marketplace');
   };
 
   const domains = [
@@ -485,14 +506,14 @@ export default function LawyerHome() {
   }, [notificationOpen]);
 
   useEffect(() => {
-    let dispatchChannel: ReturnType<typeof supabase.channel> | null = null;
+    let liveChannel: ReturnType<typeof supabase.channel> | null = null;
 
     const init = async () => {
       await loadLawyerNotifications();
       const { data: authData, error: authError } = await supabase.auth.getUser();
       if (authError || !authData.user) return;
 
-      dispatchChannel = supabase
+      liveChannel = supabase
         .channel(`lawyer-home-dispatches:${authData.user.id}`)
         .on(
           'postgres_changes',
@@ -512,14 +533,55 @@ export default function LawyerHome() {
             }
           }
         )
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'notifications',
+            filter: `user_id=eq.${authData.user.id}`,
+          },
+          async (payload) => {
+            const fresh = payload.new as Record<string, unknown>;
+            await loadLawyerNotifications();
+            if (fresh.type === 'offer_accepted') {
+              toast.success('Offer accepted by citizen', {
+                description: (fresh.title as string) || 'Your offer was accepted. Open My Cases to continue.',
+              });
+            }
+          }
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'case_pipeline',
+            filter: `lawyer_id=eq.${authData.user.id}`,
+          },
+          async (payload) => {
+            const fresh = payload.new as Record<string, unknown>;
+            if (fresh.stage === 'withdrawn') {
+              toast.info('Offer was closed', {
+                description: 'The citizen accepted another offer for this case.',
+              });
+            }
+            if (fresh.stage === 'accepted') {
+              toast.success('Case moved to My Cases', {
+                description: 'A citizen accepted your offer.',
+              });
+            }
+            await loadLawyerNotifications();
+          }
+        )
         .subscribe();
     };
 
     void init();
 
     return () => {
-      if (dispatchChannel) {
-        dispatchChannel.unsubscribe();
+      if (liveChannel) {
+        liveChannel.unsubscribe();
       }
     };
   }, [loadLawyerNotifications]);
@@ -730,62 +792,7 @@ export default function LawyerHome() {
           </div>
         </div>
 
-        {/* Fixed Input Area at Bottom */}
-        <div ref={inputBarRef} className="absolute bottom-0 left-0 right-0 p-6 md:p-10 bg-gradient-to-t from-gray-50 via-gray-50 to-transparent dark:from-[#0f1e3f] dark:via-[#0f1e3f] dark:to-transparent z-20">
-          <div className="max-w-4xl mx-auto md:px-6">
-            <div className="flex items-center gap-4 w-full group relative">
-              
-              {/* Plus Button */}
-              <button 
-                type="button"
-                className="flex items-center justify-center w-12 h-12 md:w-14 md:h-14 rounded-full border border-gray-300 dark:border-white/10 dark:bg-transparent bg-white text-gray-500 dark:text-white/60 hover:bg-gray-100 dark:hover:bg-white/5 active:bg-gray-200 hover:scale-105 active:scale-95 transition-all duration-300 shrink-0 cursor-pointer shadow-sm z-10 outline-none focus:ring-2 focus:ring-[#997953]/50 dark:focus:ring-white/20"
-                aria-label="Add attachment"
-              >
-                <svg className="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4v16m8-8H4" />
-                </svg>
-              </button>
-              
-              {/* Input Field */}
-              <div className="flex-1 relative cursor-text transition-transform duration-300">
-                <input 
-                  type="text" 
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  disabled={isTranscribing}
-                  placeholder={isTranscribing ? "Processing voice input..." : "Describe your legal query..."}
-                  className="w-full bg-white dark:bg-transparent border border-gray-300 dark:border-[#cdaa80]/30 rounded-full pl-6 pr-16 py-4 md:py-[18px] text-[15px] outline-none text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-white/40 focus:border-[#997953] dark:focus:border-[#cdaa80] focus:ring-1 focus:ring-[#997953] dark:focus:ring-[#cdaa80] transition-all duration-300 shadow-[0_4px_20px_rgba(0,0,0,0.02)] dark:shadow-[0_4px_20px_rgba(0,0,0,0.2)] hover:border-gray-400 dark:hover:border-[#cdaa80]/60 hover:bg-white/50 dark:hover:bg-[#213a56]/20 focus:bg-white dark:focus:bg-[#1a2c47]/50 disabled:opacity-70 disabled:cursor-wait"
-                />
-                
-                {/* Voice Input Button Inside the Input Field */}
-                <button
-                  type="button"
-                  onClick={isRecording ? stopRecording : startRecording}
-                  disabled={isTranscribing}
-                  className={`absolute right-3 top-1/2 -translate-y-1/2 flex items-center justify-center w-10 h-10 rounded-full transition-all duration-300 focus:outline-none disabled:opacity-50 disabled:cursor-wait ${
-                    isTranscribing 
-                      ? 'bg-transparent text-[#997953] dark:text-[#cdaa80]'
-                      : isRecording 
-                        ? 'bg-red-500 text-white animate-pulse-ring'
-                        : 'bg-transparent text-gray-400 hover:text-[#997953] dark:text-white/40 dark:hover:text-[#cdaa80] hover:bg-gray-100 dark:hover:bg-white/5'
-                  }`}
-                  aria-label={isRecording ? "Stop recording" : "Start recording"}
-                >
-                  {isTranscribing ? (
-                    <svg className="animate-spin w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                  ) : (
-                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={isRecording ? 2 : 1.5} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                    </svg>
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+
       </div>
 
       <Dialog.Root open={!!selectedDomain} onOpenChange={(open) => { if (!open) setSelectedDomain(null); }}>

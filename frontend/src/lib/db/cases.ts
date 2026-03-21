@@ -43,7 +43,7 @@ export async function upsertChatbotCase(args: {
       id: args.caseId,
       citizen_id: args.citizenId,
       domain: args.domain ?? 'other',
-      title: args.title ?? 'Citizen Chatbot Case',
+      title: args.title ?? 'Untitled Legal Case',
       incident_description: args.incident_description,
       status: args.status ?? 'analysis_pending',
       is_seeking_lawyer: args.is_seeking_lawyer ?? false,

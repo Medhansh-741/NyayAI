@@ -12,6 +12,8 @@ import { Menu, Home, Compass, Store, Gavel } from 'lucide-react';
 import { createNotification } from '@/lib/db/notifications';
 import * as Dialog from '@radix-ui/react-dialog';
 import { PriceWheel } from '../../../../components/PriceWheel';
+import { toast } from 'sonner';
+import { canonicalizeDomain, domainsMatch, toDomainLabel } from '@/lib/utils/domain';
 
 type CaseRow = Database['public']['Tables']['cases']['Row'];
 type LawyerProfile = Database['public']['Tables']['lawyer_profiles']['Row'];
@@ -109,45 +111,6 @@ const LAWYER_NAV_ITEMS: NavItem[] = [
   { id: 'marketplace', icon: Store, label: 'Marketplace', href: '/lawyerside/marketplace' },
   { id: 'my-cases', icon: Gavel, label: 'My Cases', href: '/lawyerside/my-cases' },
 ];
-
-const DOMAIN_LABELS: Record<string, string> = {
-  consumer: 'Consumer Disputes',
-  tenant: 'Tenant / Rent',
-  labour: 'Labour & Employment',
-  criminal: 'Criminal Law',
-  cyber: 'Cyber Crime',
-  property: 'Property Law',
-  family: 'Family Law',
-  rti: 'RTI',
-  corruption: 'Anti-Corruption',
-  civil: 'Civil Law',
-  other: 'General Practice',
-  tax: 'Tax Law',
-  corporate: 'Corporate / Business',
-  intellectual_property: 'Intellectual Property',
-  constitutional: 'Constitutional / PIL',
-  banking_finance: 'Banking & Finance',
-  insurance: 'Insurance',
-  matrimonial: 'Matrimonial',
-  immigration: 'Immigration',
-  environmental: 'Environmental Law',
-  medical_negligence: 'Medical Negligence',
-  motor_accident: 'Motor Accident Claims',
-  cheque_bounce: 'Cheque Bounce (NI Act)',
-  debt_recovery: 'Debt Recovery',
-  arbitration: 'Arbitration & ADR',
-  service_matters: 'Service Matters',
-  land_acquisition: 'Land Acquisition',
-  wills_succession: 'Wills & Succession',
-  domestic_violence: 'Domestic Violence',
-  pocso: 'POCSO',
-  sc_st_atrocities: 'SC/ST Atrocities Act',
-  divorce: 'Divorce',
-}
-
-function formatDomain(domain: string): string {
-  return DOMAIN_LABELS[domain] ?? domain.replace(/_/g, ' ')
-}
 
 function formatBudget(min: number | null, max: number | null): string {
   if (!min && !max) return 'Budget not specified'
@@ -579,6 +542,9 @@ export default function LawyerCaseMarketplace() {
       setLawyerProfile(profile)
 
       const specialisations = profile.specialisations ?? []
+      const specializationSet = new Set(
+        specialisations.map((item) => canonicalizeDomain(item)).filter(Boolean)
+      )
 
       // 3. Get all assigned case IDs from case_pipeline
       const { data: pipelineData } = await supabase
@@ -601,7 +567,12 @@ export default function LawyerCaseMarketplace() {
         setDbError(casesError.message)
       } else {
         const unassigned = (casesData ?? []).filter(c => !assignedCaseIds.has(c.id))
-        setAllCases(unassigned)
+        const scopedToLawyer = unassigned.filter((c) => {
+          const caseDomain = canonicalizeDomain(c.domain)
+          if (!caseDomain) return false
+          return specializationSet.size === 0 || specializationSet.has(caseDomain)
+        })
+        setAllCases(scopedToLawyer)
       }
       setIsLoading(false)
 
@@ -712,6 +683,54 @@ export default function LawyerCaseMarketplace() {
   }, [fetchData])
 
   useEffect(() => {
+    if (!currentLawyerId) return
+
+    const channel = supabase
+      .channel(`lawyer-marketplace-notifications:${currentLawyerId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'notifications',
+          filter: `user_id=eq.${currentLawyerId}`,
+        },
+        (payload) => {
+          const fresh = payload.new as Record<string, unknown>
+          if (fresh.type === 'offer_accepted') {
+            toast.success('Your offer was accepted', {
+              description: (fresh.body as string) || 'Open My Cases to continue this matter.',
+            })
+            fetchData()
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'case_pipeline',
+          filter: `lawyer_id=eq.${currentLawyerId}`,
+        },
+        (payload) => {
+          const fresh = payload.new as Record<string, unknown>
+          if (fresh.stage === 'withdrawn') {
+            toast.info('Offer no longer active', {
+              description: 'Citizen accepted another lawyer for this case.',
+            })
+            fetchData()
+          }
+        }
+      )
+      .subscribe()
+
+    return () => {
+      void supabase.removeChannel(channel)
+    }
+  }, [currentLawyerId, fetchData])
+
+  useEffect(() => {
     // snapshot time for render-purity lint and stable filtering
     setNow(Date.now())
   }, [activeTab, selectedRecency])
@@ -722,11 +741,13 @@ export default function LawyerCaseMarketplace() {
     : incomingDispatches.map((d) => d.caseData)
 
   const domainOptions = useMemo(() => {
-    const lawyerSpecs = new Set<string>(lawyerProfile?.specialisations ?? [])
+    const lawyerSpecs = new Set<string>((lawyerProfile?.specialisations ?? []).map((spec) => canonicalizeDomain(spec)).filter(Boolean))
     const domains = new Set<string>()
     activeCaseList.forEach(c => {
-      if (lawyerSpecs.size === 0 || lawyerSpecs.has(c.domain)) {
-        domains.add(c.domain)
+      const caseDomain = canonicalizeDomain(c.domain)
+      if (!caseDomain) return
+      if (lawyerSpecs.size === 0 || lawyerSpecs.has(caseDomain)) {
+        domains.add(caseDomain)
       }
     })
     return Array.from(domains).sort()
@@ -739,7 +760,7 @@ export default function LawyerCaseMarketplace() {
     result = result.filter((c) => !hiddenAvailableCaseIds.has(c.id))
 
     if (selectedDomain !== 'Legal Domain') {
-      result = result.filter(c => c.domain === selectedDomain)
+      result = result.filter(c => domainsMatch(c.domain, selectedDomain))
     }
 
     if (selectedRecency !== 'Any Time') {
@@ -764,7 +785,7 @@ export default function LawyerCaseMarketplace() {
     result = result.filter((o) => !hiddenIncomingDispatchIds.has(o.dispatch.id))
 
     if (selectedDomain !== 'Legal Domain') {
-      result = result.filter(o => o.caseData.domain === selectedDomain)
+      result = result.filter(o => domainsMatch(o.caseData.domain, selectedDomain))
     }
 
     if (selectedRecency !== 'Any Time') {
@@ -914,7 +935,7 @@ export default function LawyerCaseMarketplace() {
                     onClick={() => { setSelectedDomain(type); setIsDomainOpen(false) }}
                     className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${selectedDomain === type ? 'bg-[#f6ede1] text-[#997953] font-medium dark:bg-[#cdaa80]/20 dark:text-[#cdaa80]' : 'text-[#5b4b3d] hover:bg-[#f8f1e7] hover:text-[#443831] dark:text-white/80 dark:hover:bg-[#213a56] dark:hover:text-[#cdaa80]'}`}
                   >
-                    {formatDomain(type)}
+                    {toDomainLabel(type)}
                   </button>
                 ))}
               </div>
@@ -1032,7 +1053,7 @@ export default function LawyerCaseMarketplace() {
                       <div className="flex-1 space-y-3">
                         <div className="flex justify-between items-start gap-4">
                           <span className="inline-block px-1.5 py-0.5 bg-[#0f1e3f]/10 rounded text-[10px] font-bold tracking-wider font-sans text-[#0f1e3f]/70 uppercase">
-                            {formatDomain(caseItem.domain)}
+                            {toDomainLabel(caseItem.domain)}
                           </span>
                           <div className="md:hidden text-right font-sans">
                             <div className="text-lg font-bold font-serif">{budget}</div>
@@ -1203,7 +1224,7 @@ export default function LawyerCaseMarketplace() {
                         <div className="flex justify-between items-start gap-4">
                           <div className="flex items-center gap-2">
                             <span className="inline-block px-1.5 py-0.5 bg-[#0f1e3f]/10 rounded text-[10px] font-bold tracking-wider font-sans text-[#0f1e3f]/70 uppercase">
-                              {formatDomain(caseData.domain)}
+                              {toDomainLabel(caseData.domain)}
                             </span>
                             <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wider font-sans uppercase bg-amber-500/20 text-amber-700">
                               {isOfferSent ? 'Offer Sent' : 'Incoming'}
@@ -1337,7 +1358,7 @@ export default function LawyerCaseMarketplace() {
                     {selectedAvailable?.title ?? 'Untitled Case'}
                   </Dialog.Title>
                   <Dialog.Description className="mt-1 text-sm font-sans text-[#5b4b3d] dark:text-white/70">
-                    {selectedAvailable ? formatDomain(selectedAvailable.domain) : ''}
+                    {selectedAvailable ? toDomainLabel(selectedAvailable.domain) : ''}
                   </Dialog.Description>
                 </div>
                 <Dialog.Close className="rounded-lg px-3 py-1.5 text-sm font-sans border border-[#d8c1a1] dark:border-[#cdaa80]/30 hover:bg-[#f9f4ec] dark:hover:bg-[#12254a]">
@@ -1446,7 +1467,7 @@ export default function LawyerCaseMarketplace() {
                     {selectedDispatch?.caseData.title ?? 'Untitled Case'}
                   </Dialog.Title>
                   <Dialog.Description className="mt-1 text-sm font-sans text-[#5b4b3d] dark:text-white/70">
-                    {selectedDispatch ? formatDomain(selectedDispatch.caseData.domain) : ''}
+                    {selectedDispatch ? toDomainLabel(selectedDispatch.caseData.domain) : ''}
                   </Dialog.Description>
                 </div>
                 <Dialog.Close className="rounded-lg px-3 py-1.5 text-sm font-sans border border-[#d8c1a1] dark:border-[#cdaa80]/30 hover:bg-[#f9f4ec] dark:hover:bg-[#12254a]">

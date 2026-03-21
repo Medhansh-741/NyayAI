@@ -10,6 +10,7 @@ import { DndContext, PointerSensor, useSensor, useSensors, closestCenter, type D
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useRouter } from 'next/navigation'
+import { toast } from 'sonner'
 
 type CaseRow = Database['public']['Tables']['cases']['Row']
 type PipelineRow = Database['public']['Tables']['case_pipeline']['Row']
@@ -161,17 +162,63 @@ export default function LawyerMyCasesPage() {
   }, [])
 
   useEffect(() => {
-    void fetchMyCases()
+    let casesChannel: ReturnType<typeof supabase.channel> | null = null
+    let notificationsChannel: ReturnType<typeof supabase.channel> | null = null
 
-    const channel = supabase
-      .channel('lawyer-my-cases-live')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'case_pipeline' }, () => {
-        void fetchMyCases()
-      })
-      .subscribe()
+    const init = async () => {
+      void fetchMyCases()
+
+      const { data: authData, error: authError } = await supabase.auth.getUser()
+      if (authError || !authData.user) return
+
+      casesChannel = supabase
+        .channel(`lawyer-my-cases-live:${authData.user.id}`)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'case_pipeline',
+            filter: `lawyer_id=eq.${authData.user.id}`,
+          },
+          () => {
+            void fetchMyCases()
+          }
+        )
+        .subscribe()
+
+      notificationsChannel = supabase
+        .channel(`lawyer-my-cases-notifications:${authData.user.id}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'notifications',
+            filter: `user_id=eq.${authData.user.id}`,
+          },
+          (payload) => {
+            const fresh = payload.new as Record<string, unknown>
+            if (fresh.type === 'offer_accepted') {
+              toast.success('Offer accepted', {
+                description: (fresh.body as string) || 'A citizen accepted your offer.',
+              })
+              void fetchMyCases()
+            }
+          }
+        )
+        .subscribe()
+    }
+
+    void init()
 
     return () => {
-      void supabase.removeChannel(channel)
+      if (casesChannel) {
+        void supabase.removeChannel(casesChannel)
+      }
+      if (notificationsChannel) {
+        void supabase.removeChannel(notificationsChannel)
+      }
     }
   }, [fetchMyCases])
 

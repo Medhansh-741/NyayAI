@@ -100,6 +100,7 @@ Return ONLY valid JSON.
   "state_jurisdiction": "string (e.g. Delhi, Maharashtra) or null",
   "structured_facts": {
     "incident_type": "string (Must be one of the ALLOWED CATEGORIES keys)",
+        "case_title": "string (short case title in plain language, max 90 chars) or null",
     "incident_summary": "string or null",
     "incident_date": "string or null",
     "parties": [
@@ -240,6 +241,7 @@ def _build_structured_facts(data: dict):
 
     return StructuredFacts(
         incident_type=sf.get("incident_type"),
+        case_title=sf.get("case_title"),
         incident_summary=sf.get("incident_summary"),
         incident_date=sf.get("incident_date"),
         parties=parties,

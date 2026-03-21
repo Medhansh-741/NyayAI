@@ -2,6 +2,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from enum import Enum
+from app.schemas.domain_utils import ensure_known_domain
 
 
 # ══════════════════════════════════════════════════════════════
@@ -37,6 +38,22 @@ class LegalDomain(str, Enum):
     rti                   = "rti"
     corruption            = "corruption"
     other                 = "other"
+    banking_finance       = "banking_finance"
+    insurance             = "insurance"
+    matrimonial           = "matrimonial"
+    immigration           = "immigration"
+    environmental         = "environmental"
+    medical_negligence    = "medical_negligence"
+    motor_accident        = "motor_accident"
+    cheque_bounce         = "cheque_bounce"
+    debt_recovery         = "debt_recovery"
+    arbitration           = "arbitration"
+    service_matters       = "service_matters"
+    land_acquisition      = "land_acquisition"
+    wills_succession      = "wills_succession"
+    domestic_violence     = "domestic_violence"
+    pocso                 = "pocso"
+    sc_st_atrocities      = "sc_st_atrocities"
 
 
 class PipelineStatus(str, Enum):
@@ -197,6 +214,11 @@ class CaseCreateRequest(BaseModel):
     state_jurisdiction:   Optional[str]     = None
     incident_date:        Optional[str]     = None
     incident_location:    Optional[str]     = None
+
+    @field_validator('domain', mode='before')
+    @classmethod
+    def normalize_domain(cls, v):
+        return ensure_known_domain(v)
 
     @field_validator('raw_narrative')
     @classmethod

@@ -14,6 +14,7 @@ class Party(BaseModel):
 
 class StructuredFacts(BaseModel):
     incident_type: Optional[str] = None
+    case_title: Optional[str] = None
     incident_summary: Optional[str] = None
     incident_date: Optional[str] = None
     parties: list[Party] = Field(default_factory=list)

@@ -1,5 +1,4 @@
-from fastapi import FastAPI, HTTPException, Query
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Query, Depends
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -20,6 +19,8 @@ from retrieval import get_domain_topic_sections
 import json
 import sqlite3
 from datetime import datetime
+from app.core.auth import get_current_citizen
+from app.core.supabase import supabase_admin
 
 app = FastAPI(title="NyayaAI API", version="4.0.0")
 
@@ -70,6 +71,11 @@ class LegalUpdatesResponse(BaseModel):
     updates: list[LegalUpdateItem]
     mode: str
     fetched_at: str
+
+
+class AcceptOfferRequest(BaseModel):
+    pipeline_id: str
+    case_id: str
 
 @app.get("/health")
 async def health():
@@ -318,6 +324,120 @@ async def get_case_analysis(case_id: str):
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     return case
+
+
+@app.post("/pipeline/accept-offer")
+async def accept_offer_secure(
+    request: AcceptOfferRequest,
+    user=Depends(get_current_citizen),
+):
+    citizen_id = user.get("sub")
+    if not citizen_id:
+        raise HTTPException(status_code=401, detail="Invalid auth token")
+
+    try:
+        pipeline_res = (
+            supabase_admin
+            .table("case_pipeline")
+            .select("id, case_id, lawyer_id, stage, offer_amount")
+            .eq("id", request.pipeline_id)
+            .maybe_single()
+            .execute()
+        )
+        pipeline_row = pipeline_res.data
+
+        if not pipeline_row:
+            raise HTTPException(status_code=404, detail="Offer not found")
+
+        if pipeline_row.get("case_id") != request.case_id:
+            raise HTTPException(status_code=409, detail="Offer does not belong to this case")
+
+        if pipeline_row.get("stage") != "offered":
+            raise HTTPException(status_code=409, detail="Offer is no longer pending")
+
+        case_res = (
+            supabase_admin
+            .table("cases")
+            .select("id, title, citizen_id, status")
+            .eq("id", request.case_id)
+            .maybe_single()
+            .execute()
+        )
+        case_row = case_res.data
+
+        if not case_row:
+            raise HTTPException(status_code=404, detail="Case not found")
+
+        if case_row.get("citizen_id") != citizen_id:
+            raise HTTPException(status_code=403, detail="You are not allowed to accept offers for this case")
+
+        if case_row.get("status") in ["lawyer_matched", "active", "completed"]:
+            raise HTTPException(status_code=409, detail="Case is already matched")
+
+        now_iso = datetime.utcnow().isoformat()
+
+        accepted_res = (
+            supabase_admin
+            .table("case_pipeline")
+            .update({"stage": "accepted", "accepted_at": now_iso})
+            .eq("id", request.pipeline_id)
+            .execute()
+        )
+
+        (
+            supabase_admin
+            .table("case_pipeline")
+            .update({"stage": "withdrawn"})
+            .eq("case_id", request.case_id)
+            .eq("stage", "offered")
+            .neq("id", request.pipeline_id)
+            .execute()
+        )
+
+        (
+            supabase_admin
+            .table("cases")
+            .update({
+                "status": "lawyer_matched",
+                "lawyer_matched_at": now_iso,
+                "is_seeking_lawyer": False,
+            })
+            .eq("id", request.case_id)
+            .execute()
+        )
+
+        lawyer_id = pipeline_row.get("lawyer_id")
+        if lawyer_id:
+            amount = pipeline_row.get("offer_amount")
+            amount_suffix = f" (Offer: INR {int(amount):,})" if isinstance(amount, (int, float)) else ""
+            (
+                supabase_admin
+                .table("notifications")
+                .insert({
+                    "user_id": lawyer_id,
+                    "type": "offer_accepted",
+                    "title": "Your offer was accepted",
+                    "body": f"{case_row.get('title') or 'A case'} has accepted your offer{amount_suffix}.",
+                    "data": {
+                        "case_id": request.case_id,
+                        "pipeline_id": request.pipeline_id,
+                        "lawyer_id": lawyer_id,
+                    },
+                })
+                .execute()
+            )
+
+        return {
+            "success": True,
+            "pipeline": accepted_res.data,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Secure offer accept failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to accept offer")
+
+
 @app.post("/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
     """Accept an audio file and return its Sarvam STT transcription."""

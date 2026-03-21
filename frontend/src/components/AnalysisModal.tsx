@@ -3,6 +3,8 @@
 import React from 'react';
 import NextLink from 'next/link';
 import { ChatAnalysisCard } from './ChatAnalysisCard';
+import { getBackendUrl } from '@/lib/utils/backendUrl';
+import { toDomainLabel, canonicalizeDomain } from '@/lib/utils/domain';
 
 interface CaseAnalysis {
   case_id: string;
@@ -14,6 +16,7 @@ interface CaseAnalysis {
   agent_trace?: any;
 }
 
+
 interface AnalysisModalProps {
   analysis: CaseAnalysis;
   caseTitle: string;
@@ -21,7 +24,7 @@ interface AnalysisModalProps {
 }
 
 export function AnalysisModal({ analysis, caseTitle, caseDomain }: AnalysisModalProps) {
-  const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || 'http://127.0.0.1:8001').replace(/\/$/, '');
+  const BACKEND_URL = getBackendUrl();
 
   const metadata = {
     summary: analysis?.structured_facts?.incident_summary,
@@ -32,6 +35,13 @@ export function AnalysisModal({ analysis, caseTitle, caseDomain }: AnalysisModal
     reasoningTrace: analysis?.reasoning_trace,
     incidentType: analysis?.structured_facts?.incident_type,
   };
+
+  // Dynamic lawyer button
+  const canonicalDomain = canonicalizeDomain(caseDomain);
+  const domainLabel = toDomainLabel(caseDomain) || 'Law';
+  // For the link, pass ?domain=canonicalDomain if known
+  const lawyerLink = canonicalDomain ? `/citizen/market_place?domain=${encodeURIComponent(canonicalDomain)}` : '/citizen/market_place';
+  const lawyerButtonText = `View ${domainLabel} Lawyers →`;
 
   return (
     <div className="space-y-4 max-h-[70vh] overflow-y-auto custom-scrollbar pr-2">
@@ -44,10 +54,10 @@ export function AnalysisModal({ analysis, caseTitle, caseDomain }: AnalysisModal
       {/* View Lawyer Button */}
       <div className="sticky bottom-0 pt-2 border-t border-[#e7d9c7] dark:border-[#cdaa80]/20 bg-white dark:bg-[#0a152e] pb-1">
         <NextLink
-          href="/citizen/market_place"
+          href={lawyerLink}
           className="block w-full text-center px-4 py-3 rounded-lg bg-[#0f1e3f] text-[#cdaa80] font-semibold hover:bg-[#1a3358] transition"
         >
-          View Cyber Lawyers →
+          {lawyerButtonText}
         </NextLink>
       </div>
     </div>

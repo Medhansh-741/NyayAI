@@ -13,8 +13,9 @@ import { toast } from 'sonner';
 import { getNotifications, markAllNotificationsRead, markNotificationRead, subscribeToNotifications } from '@/lib/db/notifications';
 import type { Database } from '@/types/supabase';
 import { ChatAnalysisCard } from '@/components/ChatAnalysisCard';
+import { getBackendUrl } from '@/lib/utils/backendUrl';
 
-const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001').replace(/\/$/, '')
+const BACKEND_URL = getBackendUrl();
 
 interface Message {
   id: string;

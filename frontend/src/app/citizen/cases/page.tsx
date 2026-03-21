@@ -15,6 +15,8 @@ import { acceptOffer, getCasePipelineForCitizen, getPendingOffersCount } from '@
 import { toast } from 'sonner';
 import NextLink from 'next/link';
 import { AnalysisModal } from '../../../components/AnalysisModal';
+import { getBackendUrl } from '@/lib/utils/backendUrl'
+import { toDomainLabel } from '@/lib/utils/domain';
 
 type CaseRow = Database['public']['Tables']['cases']['Row'];
 type NotificationRow = Database['public']['Tables']['notifications']['Row'];
@@ -348,7 +350,7 @@ export default function CaseHistory() {
 
     // Fetch case analysis from backend API using case_id
     try {
-      const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001').replace(/\/$/, '')
+      const BACKEND_URL = getBackendUrl()
       const response = await fetch(`${BACKEND_URL}/cases/${caseId}`).catch(e => {
         console.warn('Network error fetching analysis:', e)
         return null
@@ -391,40 +393,51 @@ export default function CaseHistory() {
     if (!selectedCase) return
     setOffersError(null)
     setAcceptingOfferId(pipelineId)
-    const { data: authData, error: authError } = await supabase.auth.getUser()
-    if (authError || !authData.user) {
-      setOffersError('Please log in to accept offers.')
-      setAcceptingOfferId(null)
-      return
-    }
 
-    const { error } = await acceptOffer(pipelineId, selectedCase.id)
-    if (error) {
-      setOffersError(error.message)
-      setAcceptingOfferId(null)
-      return
-    }
-
-    // Refresh offers + the case list so the status updates in UI
-    const { data: pipelineRows, error: pipelineErr } = await getCasePipelineForCitizen(selectedCase.id)
-    if (pipelineErr) setOffersError(pipelineErr.message)
-    const rows = (pipelineRows ?? []) as Database['public']['Tables']['case_pipeline']['Row'][]
-    setOffers(rows.filter((r) => r.stage === 'offered' || r.stage === 'accepted'))
-
-    const { data: casesData, error: casesErr } = await getCitizenCases(authData.user.id)
-    if (casesErr) setDbError(casesErr.message)
-    else setDbCases(casesData ?? [])
-
-    setAcceptingOfferId(null)
-    
-    // Refresh offer counts after accepting
-    const { data: authDataRefresh } = await supabase.auth.getUser()
-    if (authDataRefresh?.user) {
-      const { data: cases } = await getCitizenCases(authDataRefresh.user.id)
-      if (cases) {
-        const { data: counts } = await getPendingOffersCount(cases.map(c => c.id))
-        if (counts) setOfferCounts(counts)
+    const getOfferErrorMessage = (error: unknown) => {
+      const message = error instanceof Error ? error.message : 'Failed to accept offer.'
+      if (/failed to fetch/i.test(message)) {
+        return 'Unable to reach the case service right now. Please check your connection and try again.'
       }
+      return message
+    }
+
+    try {
+      const { data: authData, error: authError } = await supabase.auth.getUser()
+      if (authError || !authData.user) {
+        setOffersError('Please log in to accept offers.')
+        return
+      }
+
+      const { error } = await acceptOffer(pipelineId, selectedCase.id)
+      if (error) {
+        setOffersError(getOfferErrorMessage(error))
+        return
+      }
+
+      // Refresh offers + the case list so the status updates in UI
+      const { data: pipelineRows, error: pipelineErr } = await getCasePipelineForCitizen(selectedCase.id)
+      if (pipelineErr) setOffersError(pipelineErr.message)
+      const rows = (pipelineRows ?? []) as Database['public']['Tables']['case_pipeline']['Row'][]
+      setOffers(rows.filter((r) => r.stage === 'offered' || r.stage === 'accepted'))
+
+      const { data: casesData, error: casesErr } = await getCitizenCases(authData.user.id)
+      if (casesErr) setDbError(casesErr.message)
+      else setDbCases(casesData ?? [])
+
+      // Refresh offer counts after accepting
+      const { data: authDataRefresh } = await supabase.auth.getUser()
+      if (authDataRefresh?.user) {
+        const { data: cases } = await getCitizenCases(authDataRefresh.user.id)
+        if (cases) {
+          const { data: counts } = await getPendingOffersCount(cases.map(c => c.id))
+          if (counts) setOfferCounts(counts)
+        }
+      }
+    } catch (error) {
+      setOffersError(getOfferErrorMessage(error))
+    } finally {
+      setAcceptingOfferId(null)
     }
   }
 
@@ -465,7 +478,7 @@ export default function CaseHistory() {
       id: c.id,
       title: c.title ?? 'Untitled Case',
       description: c.incident_description ?? 'No description provided.',
-      domain: (c.domain ?? 'other').replace(/_/g, ' '),
+      domain: toDomainLabel(c.domain ?? 'other'),
       date: c.created_at ? new Date(c.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Unknown',
       status: formatUiStatus(c),
     }))
@@ -909,7 +922,7 @@ export default function CaseHistory() {
                     {selectedCase?.title ?? 'Untitled Case'}
                   </Dialog.Title>
                   <Dialog.Description className="mt-1 text-sm font-sans text-[#5b4b3d] dark:text-white/70">
-                    {selectedCase ? selectedCase.domain?.replace(/_/g, ' ') : ''}
+                    {selectedCase ? toDomainLabel(selectedCase.domain) : ''}
                   </Dialog.Description>
                 </div>
                 <Dialog.Close className="rounded-lg px-3 py-1.5 text-sm font-sans border border-[#d8c1a1] dark:border-[#cdaa80]/30 hover:bg-[#f9f4ec] dark:hover:bg-[#12284f]">

@@ -23,7 +23,7 @@ from markdown_pdf import MarkdownPdf, Section
 
 from case_state import GeneratedDocuments, GeneratedDoc
 
-load_dotenv(override=True)
+load_dotenv(override=False)
 logger = logging.getLogger(__name__)
 
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))

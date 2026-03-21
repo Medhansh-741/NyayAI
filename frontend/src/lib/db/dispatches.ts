@@ -2,7 +2,10 @@ import { supabase } from '@/lib/supabase/client'
 
 type UntypedSupabase = {
   from: (table: string) => {
-    insert: (values: Record<string, unknown>) => {
+    upsert: (
+      values: Record<string, unknown>,
+      options?: { onConflict?: string }
+    ) => {
       select: () => {
         single: () => Promise<{ data: unknown; error: unknown }>
       }
@@ -36,12 +39,14 @@ export async function createBriefDispatch(payload: BriefDispatchInsert) {
   const client = supabase as unknown as UntypedSupabase
   const { data, error } = await client
     .from('brief_dispatches')
-    .insert({
+    .upsert({
       ...payload,
       ai_brief: payload.ai_brief ?? null,
       citizen_inputs: payload.citizen_inputs ?? null,
       documents: payload.documents ?? null,
       status: 'sent',
+    }, {
+      onConflict: 'case_id,lawyer_id',
     })
     .select()
     .single()
